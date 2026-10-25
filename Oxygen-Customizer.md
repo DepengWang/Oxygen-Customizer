@@ -469,4 +469,5 @@ com.oplus.aodimpl.AodRootLayout
   - `AodClock`：删除 `createPackageContext(CONTEXT_INCLUDE_CODE)` 重复加载 KeyguardClockBase / PersonalityClocks 及其上的静态 hook（这些类不是 SystemUI 实际使用的类，hook 无效；实际类由 `ensureNativeClockHooks` / `ensureAodEngineHooks` 在真实 ClassLoader 上挂钩）。
   - `AodClock.loadClockTypeface()`：不再每次读取 `Xprefs`（`RemotePreferences` 每次读取都是对模块应用的跨进程查询，且位于绘制 hook 热路径）；改用 `updatePrefs()` 维护的 `mFontStyle`。
   - `LockscreenClock.loadClockTypeface()`：缓存 Typeface，避免每分钟更新时重复读取字体文件并触发多余布局。
+- **删除 Vector 后复查（2026-10-25 19:34–19:36）**：SystemUI 进程（PID 22586，19:28:56 启动）未重启、无新崩溃；锁屏时钟、星期、“Charging 94%”、通知条均为 Orbitron；AOD（确认 `mWakefulness=Dozing` 后截图）中央时间“7:36”（保留原生黄色）、日期、“73 unlocks”、底部电量“94%”均为 Orbitron。
 - 排障提示：今后 SystemUI 若再出现启动崩溃，先查 `/data/tombstones/` 与 LSPosed 的安全模式状态（`/data/adb/modules/zygisk_lsposed/lspctl status`）。
