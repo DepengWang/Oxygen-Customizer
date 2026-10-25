@@ -1342,4 +1342,12 @@
     <!-- Shortcut string -->
     <!-- Separate qs tweaks -->
     <!-- Separate qs layout -->
+    <string name="global_font_style_title">全局字体</string>
+    <string name="charging_anim_duration_title">充电动画显示时长</string>
+    <string name="charging_anim_duration_stock">默认（14 秒）</string>
+    <string name="charging_anim_duration_30s">30 秒</string>
+    <string name="charging_anim_duration_1m">1 分钟</string>
+    <string name="charging_anim_duration_2m">2 分钟</string>
+    <string name="charging_anim_duration_5m">5 分钟</string>
+    <string name="charging_anim_duration_always">一直显示</string>
 </resources>

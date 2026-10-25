@@ -43,6 +43,7 @@ import com.airbnb.lottie.RenderMode;
 
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Field;
 
 import it.dhd.oxygencustomizer.BuildConfig;
 import it.dhd.oxygencustomizer.R;
@@ -219,6 +220,36 @@ public class ViewHelper {
                 applyFontRecursively((ViewGroup) child, typeface);
             } else if (child instanceof TextView textView) {
                 textView.setTypeface(typeface);
+            }
+        }
+    }
+
+    public static void applyFontToView(View view, Typeface typeface) {
+        if (view == null || typeface == null) return;
+
+        if (view instanceof TextView textView) {
+            // Skip no-op calls: setTypeface() is hooked and re-enters this path.
+            if (textView.getTypeface() != typeface) textView.setTypeface(typeface);
+            if (textView.getPaint().getTypeface() != typeface) textView.getPaint().setTypeface(typeface);
+        }
+        applyTypefaceToPaintFields(view, typeface);
+        if (view instanceof ViewGroup viewGroup) {
+            for (int i = 0; i < viewGroup.getChildCount(); i++) {
+                applyFontToView(viewGroup.getChildAt(i), typeface);
+            }
+        }
+    }
+
+    private static void applyTypefaceToPaintFields(View view, Typeface typeface) {
+        for (Class<?> type = view.getClass(); type != null && type != View.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (!Paint.class.isAssignableFrom(field.getType())) continue;
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(view);
+                    if (value instanceof Paint paint) paint.setTypeface(typeface);
+                } catch (Throwable ignored) {
+                }
             }
         }
     }

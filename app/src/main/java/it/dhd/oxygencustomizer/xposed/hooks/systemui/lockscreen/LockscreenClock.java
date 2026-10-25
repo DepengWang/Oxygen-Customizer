@@ -21,7 +21,6 @@ import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenCloc
 import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_COLOR_CODE_TEXT2;
 import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_CUSTOM_COLOR_SWITCH;
 import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_CUSTOM_DEVICE_VALUE;
-import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_CUSTOM_FONT;
 import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_CUSTOM_IMAGE;
 import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_CUSTOM_USER_IMAGE;
 import static it.dhd.oxygencustomizer.utils.Constants.Preferences.LockscreenClock.LOCKSCREEN_CLOCK_CUSTOM_USER_VALUE;
@@ -41,6 +40,7 @@ import static it.dhd.oxygencustomizer.xposed.utils.ViewHelper.findViewWithTag;
 import static it.dhd.oxygencustomizer.xposed.utils.ViewHelper.loadLottieAnimationView;
 import static it.dhd.oxygencustomizer.xposed.utils.ViewHelper.setMargins;
 import static it.dhd.oxygencustomizer.xposed.utils.ViewHelper.setMarginsNoConvert;
+import static it.dhd.oxygencustomizer.utils.Constants.Preferences.General.GLOBAL_FONT_STYLE;
 
 import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
@@ -112,15 +112,18 @@ public class LockscreenClock extends XposedMods {
 
     private static final String OC_LOCKSCREEN_CLOCK_LAYOUT = "lockscreen_clock_layout";
     private static final String OC_LOCKSCREEN_CLOCK_TAG = "oxygencustomizer_lockscreen_clock";
+    private static final String FONT_STYLE_SYSTEM = "system";
+    private static final String FONT_STYLE_CLOCKOPIA = "clockopia";
+    private static final String FONT_STYLE_ORBITRON = "orbitron";
     private final static String listenPackage = Constants.Packages.SYSTEM_UI;
     private static final long thresholdTime = 500; // milliseconds
     private static Object mStockClock;
     private static long lastUpdated = System.currentTimeMillis();
-    private final String customFont = Environment.getExternalStorageDirectory() + "/.oxygen_customizer/lockscreen_clock_font.ttf";
     Class<?> LottieAn = null;
     private ViewGroup mClockViewContainer = null;
     private ViewGroup mStatusViewContainer = null;
     private RelativeLayout mClockView = null;
+    private View mStockClockView = null;
     private View mMediaHostContainer = null;
     // Lockscreen Clock Prefs
     private boolean customLockscreenClock = false;
@@ -129,7 +132,7 @@ public class LockscreenClock extends XposedMods {
     private float mLockHeight = 0;
     private float clockScale;
     private int lineHeight;
-    private boolean customFontEnabled = false;
+    private String fontStyle = FONT_STYLE_SYSTEM;
     private String customName, customDeviceName;
     private boolean useCustomUserImage;
     private boolean useCustomImage;
@@ -226,12 +229,16 @@ public class LockscreenClock extends XposedMods {
         bottomAodMargin = Xprefs.getSliderInt(LOCKSCREEN_CLOCK_BOTTOM_MARGIN_AOD, 40);
         clockScale = Xprefs.getSliderFloat(LOCKSCREEN_CLOCK_TEXT_SCALING, 1.0f);
         lineHeight = Xprefs.getSliderInt(LOCKSCREEN_CLOCK_LINE_HEIGHT, 0);
-        customFontEnabled = Xprefs.getBoolean(LOCKSCREEN_CLOCK_CUSTOM_FONT, false);
+        fontStyle = Xprefs.getString(GLOBAL_FONT_STYLE, FONT_STYLE_SYSTEM);
         customName = Xprefs.getString(LOCKSCREEN_CLOCK_CUSTOM_USER_VALUE, "");
         customDeviceName = Xprefs.getString(LOCKSCREEN_CLOCK_CUSTOM_DEVICE_VALUE, "");
         useCustomUserImage = Xprefs.getBoolean(LOCKSCREEN_CLOCK_CUSTOM_USER_IMAGE, false);
         useCustomImage = Xprefs.getBoolean(LOCKSCREEN_CLOCK_CUSTOM_IMAGE, false);
         mCustomDateFormat = Xprefs.getString(LOCKSCREEN_CLOCK_DATE_FORMAT, "");
+
+        if (Key.length > 0 && Key[0].equals(GLOBAL_FONT_STYLE)) {
+            new Handler(Looper.getMainLooper()).post(this::applyFontToStockClock);
+        }
 
         if (Key.length > 0) {
             for (String LCPrefs : LOCKSCREEN_CLOCK_PREFS) {
@@ -331,6 +338,8 @@ public class LockscreenClock extends XposedMods {
                 int viewType = (int) param.args[0];
                 if (viewType != 1) return;
                 View view = (View) param.getResult();
+                mStockClockView = view;
+                applyFontToStockClock(view);
                 if (view instanceof ViewGroup viewGroup) {
                     for (int i = 0; i < viewGroup.getChildCount(); i++) {
                         View child = viewGroup.getChildAt(i);
@@ -467,6 +476,7 @@ public class LockscreenClock extends XposedMods {
                     GridLayout KeyguardStatusView = (GridLayout) param.thisObject;
 
                     mClockView = KeyguardStatusView.findViewById(mContext.getResources().getIdentifier("keyguard_clock_container", "id", mContext.getPackageName()));
+                    applyFontToStockClock(mClockView);
 
                     mMediaHostContainer = (View) getObjectField(param.thisObject, "mMediaHostContainer");
 
@@ -484,6 +494,9 @@ public class LockscreenClock extends XposedMods {
                 .after("updateStandardTime")
                 .run(param -> {
                     mStockClock = param.thisObject;
+                    if (param.thisObject instanceof View view) {
+                        applyFontToStockClock(view);
+                    }
 
                     if (customLockscreenClock || mStockClockRed == 0) return;
 
@@ -504,6 +517,9 @@ public class LockscreenClock extends XposedMods {
         findAndHookMethod(RedTextClock, "onTimeChanged", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                if (param.thisObject instanceof View view) {
+                    applyFontToStockClock(view);
+                }
                 if (customLockscreenClock || mStockClockRed == 0) return;
 
                 boolean mShouldRunTicker = getBooleanField(param.thisObject, "mShouldRunTicker");
@@ -677,14 +693,47 @@ public class LockscreenClock extends XposedMods {
 
     }
 
+    private Typeface loadClockTypeface(String style) {
+        if (appContext == null || FONT_STYLE_SYSTEM.equals(style)) return null;
+
+        String assetName;
+        if (FONT_STYLE_CLOCKOPIA.equals(style)) {
+            assetName = "Fonts/clockopia.ttf";
+        } else if (FONT_STYLE_ORBITRON.equals(style)) {
+            assetName = "Fonts/orbitron_regular.ttf";
+        } else {
+            return null;
+        }
+
+        try {
+            return Typeface.createFromAsset(appContext.getAssets(), assetName);
+        } catch (Throwable t) {
+            log("Unable to load bundled lockscreen font " + assetName + ": " + t.getMessage());
+            return null;
+        }
+    }
+
+    private void applyFontToStockClock() {
+        applyFontToStockClock(mStockClockView);
+        if (mStockClock instanceof View view) {
+            applyFontToStockClock(view);
+        }
+        applyFontToStockClock(mClockView);
+    }
+
+    private void applyFontToStockClock(View view) {
+        if (view == null) return;
+        Typeface typeface = loadClockTypeface(fontStyle);
+        if (typeface != null) {
+            ViewHelper.applyFontToView(view, typeface);
+        }
+    }
+
     private void modifyClockView(View clockView) {
 
         int systemAccent = getPrimaryColor(mContext);
 
-        Typeface typeface = null;
-        if (customFontEnabled && (new File(customFont).exists())) {
-            typeface = Typeface.createFromFile(new File(customFont));
-        }
+        Typeface typeface = loadClockTypeface(fontStyle);
 
         setMargins(clockView, mContext, 0, topMargin, 0, bottomMargin);
 

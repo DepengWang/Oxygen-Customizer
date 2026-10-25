@@ -33,6 +33,8 @@ public final class Constants {
             public static final List<String> PREF_UPDATE_EXCLUSIONS = Arrays.asList(BootLoopProtector.LOAD_TIME_KEY_KEY, BootLoopProtector.PACKAGE_STRIKE_KEY_KEY);
             public static final String PREF_MORE_LOGGING = "moreLogging";
             public static final String APP_LANGUAGE = "appLanguage";
+            public static final String GLOBAL_FONT_STYLE = "global_font_style";
+            public static final String CHARGING_ANIM_DURATION = "charging_anim_duration";
         }
 
         public static class BatteryPrefs {
@@ -547,6 +549,7 @@ public final class Constants {
                     LOCKSCREEN_CLOCK_CUSTOM_COLOR,
                     LOCKSCREEN_CLOCK_TOP_MARGIN,
                     LOCKSCREEN_CLOCK_BOTTOM_MARGIN,
+                    General.GLOBAL_FONT_STYLE,
                     LOCKSCREEN_CLOCK_CUSTOM_FONT,
                     LOCKSCREEN_CLOCK_TEXT_SCALING,
                     LOCKSCREEN_CLOCK_LINE_HEIGHT,
