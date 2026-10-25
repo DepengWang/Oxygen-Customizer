@@ -24,25 +24,6 @@
         <item>orbitron</item>
     </string-array>
 
-    <string-array name="charging_anim_duration_entries" translatable="false">
-        <item>@string/charging_anim_duration_stock</item>
-        <item>@string/charging_anim_duration_30s</item>
-        <item>@string/charging_anim_duration_1m</item>
-        <item>@string/charging_anim_duration_2m</item>
-        <item>@string/charging_anim_duration_5m</item>
-        <item>@string/charging_anim_duration_always</item>
-    </string-array>
-
-    <!-- 0 = stock (14 s), -1 = always, otherwise milliseconds -->
-    <string-array name="charging_anim_duration_values" translatable="false">
-        <item>0</item>
-        <item>30000</item>
-        <item>60000</item>
-        <item>120000</item>
-        <item>300000</item>
-        <item>-1</item>
-    </string-array>
-
     <string-array name="locale_name">
         <item>@string/lang_follow_system</item>
         <item>Afrikaans</item>

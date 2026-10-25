@@ -108,6 +108,14 @@ public class AodClock extends XposedMods {
     private boolean mNativeAodTextHookLogged;
     private boolean mApplyingNativeTypeface;
     private boolean mApplyingAodFont;
+    // Hot-path caches for the global draw/text hooks (see applyFontToAodView,
+    // isNativeAodClockRoot, getNativeAodClockTextId).
+    private static final long FONT_REAPPLY_INTERVAL_MS = 1000;
+    private final Map<View, Long> mFontAppliedAt = new WeakHashMap<>();
+    private Typeface mThrottleTypeface;
+    private int mKeyguardStyleClockId;
+    private final Map<android.content.res.Resources, android.util.SparseArray<String>> mClockTextIdNames =
+            new WeakHashMap<>();
     private boolean mNativeAodDiagnosticLogged;
     private boolean mNativeClockFontPathLogged;
     private boolean mNativeClockFontStateLogged;
@@ -308,9 +316,6 @@ public class AodClock extends XposedMods {
                 .before("onDraw")
                 .run(param -> applyFontToNativeAodTextView((TextView) param.thisObject));
         SystemUiTextView
-                .after("onDraw")
-                .run(param -> applyFontToNativeAodTextView((TextView) param.thisObject));
-        SystemUiTextView
                 .after("setText")
                 .run(param -> {
                     TextView textView = (TextView) param.thisObject;
@@ -335,22 +340,8 @@ public class AodClock extends XposedMods {
                 .run(param -> {
                     View view = (View) param.thisObject;
                     if (isNativeAodClockRoot(view)) {
-                        applyFontToAodView(view);
+                        applyFontToAodViewOnDraw(view);
                         applyFontToNativeAodClockIds(view);
-                    }
-                });
-        SystemUiViewGroup
-                .after("dispatchDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (!isNativeAodClockRoot(view)) return;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodClockIds(view);
-                    if (!mNativeAodDiagnosticLogged) {
-                        mNativeAodDiagnosticLogged = true;
-                        XposedBridge.log("[OxygenCustomizer-AOD] native root after dispatch: "
-                                + view.getClass().getName() + ", childCount="
-                                + ((ViewGroup) view).getChildCount());
                     }
                 });
 
@@ -373,20 +364,8 @@ public class AodClock extends XposedMods {
                 .run(param -> {
                     View view = (View) param.thisObject;
                     if (!isNativeAodClockRoot(view)) return;
-                    applyFontToAodView(view);
+                    applyFontToAodViewOnDraw(view);
                     applyFontToNativeAodClockIds(view);
-                });
-        SystemUiFrameLayout
-                .after("dispatchDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (!isNativeAodClockRoot(view)) return;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodClockIds(view);
-                    if (!mNativeAodDiagnosticLogged) {
-                        mNativeAodDiagnosticLogged = true;
-                        XposedBridge.log("[OxygenCustomizer-AOD] native FrameLayout root draw");
-                    }
                 });
 
         // OOS 16 hosts the native AOD clock content in this vendor layout.
@@ -420,22 +399,15 @@ public class AodClock extends XposedMods {
                 .before("onDraw")
                 .run(param -> {
                     View view = (View) param.thisObject;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodAncestors(view);
-                });
-        NativeOplusKeyguardStyleClock
-                .after("onDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodAncestors(view);
+                    applyFontToAodViewOnDraw(view);
+                    applyFontToNativeAodAncestors(view, true);
                 });
         NativeOplusKeyguardStyleClock
                 .before("dispatchDraw")
                 .run(param -> {
                     View view = (View) param.thisObject;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodAncestors(view);
+                    applyFontToAodViewOnDraw(view);
+                    applyFontToNativeAodAncestors(view, true);
                 });
         Log.i("OxygenCustomizer-AOD", "WrapGridLayout class found=" + (NativeAodLayout.getClazz() != null));
         NativeAodLayout
@@ -443,7 +415,7 @@ public class AodClock extends XposedMods {
                 .run(param -> {
                     View view = (View) param.thisObject;
                     if (isDescendantOfNativeAodClock(view)) {
-                        applyFontToAodView(view);
+                        applyFontToAodViewOnDraw(view);
                         if (!mNativeAodHookLogged) {
                             mNativeAodHookLogged = true;
                             Log.i("OxygenCustomizer-AOD", "Native AOD draw hit, font=" + mFontStyle);
@@ -454,7 +426,7 @@ public class AodClock extends XposedMods {
                 .after("onLayout")
                 .run(param -> {
                     View view = (View) param.thisObject;
-                    if (isDescendantOfNativeAodClock(view)) applyFontToAodView(view);
+                    if (isDescendantOfNativeAodClock(view)) applyFontToAodViewOnDraw(view);
                 });
 
         ClassLoader clockBaseClassLoader = null;
@@ -550,7 +522,7 @@ public class AodClock extends XposedMods {
 
         NativeClockTimeView
                 .before("dispatchDraw")
-                .run(param -> applyFontToAodView((View) param.thisObject));
+                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
         NativeClockTimeView
                 .after("dispatchDraw")
                 .run(param -> applyFontToNativeClockTimeView((View) param.thisObject));
@@ -585,13 +557,13 @@ public class AodClock extends XposedMods {
                 });
         NativeClockContainer
                 .before("dispatchDraw")
-                .run(param -> applyFontToAodView((View) param.thisObject));
+                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
         NativeClockContainer
                 .after("setFontStyle")
                 .run(param -> applyFontToAodView((View) param.thisObject));
         NativeClockViewRoot
                 .before("dispatchDraw")
-                .run(param -> applyFontToAodView((View) param.thisObject));
+                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
         NativeClockViewRoot
                 .after("setFontStyle")
                 .run(param -> applyFontToAodView((View) param.thisObject));
@@ -600,7 +572,7 @@ public class AodClock extends XposedMods {
                 .run(param -> applyFontToAodView((View) param.thisObject));
         NativeCustomizedTextView
                 .before("onDraw")
-                .run(param -> applyFontToAodView((View) param.thisObject));
+                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
         NativeCustomizedTextView
                 .after("setText")
                 .run(param -> {
@@ -710,16 +682,16 @@ public class AodClock extends XposedMods {
     private void hookBigClockView(ReflectedClass reflectedClass) {
         reflectedClass
                 .before("onAttachedToWindow")
-                .run(param -> applyFontToBigClockObject(param.thisObject));
+                .run(param -> applyFontToBigClockObject(param.thisObject, false));
         reflectedClass
                 .before("onDraw")
-                .run(param -> applyFontToBigClockObject(param.thisObject));
+                .run(param -> applyFontToBigClockObject(param.thisObject, true));
         reflectedClass
                 .before("dispatchDraw")
-                .run(param -> applyFontToBigClockObject(param.thisObject));
+                .run(param -> applyFontToBigClockObject(param.thisObject, true));
         reflectedClass
                 .after("onLayout")
-                .run(param -> applyFontToBigClockObject(param.thisObject));
+                .run(param -> applyFontToBigClockObject(param.thisObject, true));
     }
 
     private void hookBigClockFontClass(ReflectedClass reflectedClass) {
@@ -739,9 +711,13 @@ public class AodClock extends XposedMods {
         }
     }
 
-    private void applyFontToBigClockObject(Object object) {
+    private void applyFontToBigClockObject(Object object, boolean onDraw) {
         if (object instanceof View view) {
-            applyFontToAodView(view);
+            if (onDraw) {
+                applyFontToAodViewOnDraw(view);
+            } else {
+                applyFontToAodView(view);
+            }
             applyFontToNativeAodClockIds(view);
         }
     }
@@ -752,21 +728,50 @@ public class AodClock extends XposedMods {
 
     private String getNativeAodClockTextId(View view) {
         if (view == null || view.getId() == View.NO_ID) return null;
+        // These checks run on every draw/setText of every TextView: resolve
+        // each view id to its entry name once and cache it ("" = not ours).
+        int id = view.getId();
+        // Keyed per Resources: plugin (KeyguardClockBase) ids can collide
+        // with SystemUI's 0x7f ids.
+        android.content.res.Resources res = view.getResources();
+        android.util.SparseArray<String> names = mClockTextIdNames.get(res);
+        if (names == null) {
+            names = new android.util.SparseArray<>();
+            mClockTextIdNames.put(res, names);
+        }
+        String cached = names.get(id);
+        if (cached != null) return cached.isEmpty() ? null : cached;
+        String result = "";
         try {
-            String name = view.getResources().getResourceEntryName(view.getId());
-            return switch (name) {
+            String name = view.getResources().getResourceEntryName(id);
+            switch (name) {
                 case "clock_time_hour_first_txt", "clock_time_hour_second_txt",
                         "clock_time_symbol_text", "clock_time_minutes_txt", "week_text",
-                        "date_text", "extra_message_content" -> name;
-                default -> null;
-            };
+                        "date_text", "extra_message_content" -> result = name;
+                default -> {
+                }
+            }
         } catch (Throwable ignored) {
-            return null;
         }
+        names.put(id, result);
+        return result.isEmpty() ? null : result;
     }
 
     private boolean isNativeAodClockRoot(View view) {
         if (view == null || view.getId() == View.NO_ID) return false;
+        // Compare ints instead of looking up the entry name for every view on
+        // every frame; the id is resolved once from SystemUI's resources.
+        if (mKeyguardStyleClockId == 0) {
+            try {
+                mKeyguardStyleClockId = mContext.getResources().getIdentifier(
+                        "keyguard_style_clock", "id", mContext.getPackageName());
+            } catch (Throwable ignored) {
+            }
+            if (mKeyguardStyleClockId == 0) mKeyguardStyleClockId = -1;
+        }
+        // Plugin views can reuse the same 0x7f id, so confirm the name only
+        // when the int matches (rare); all other views exit on the int test.
+        if (mKeyguardStyleClockId > 0 && view.getId() != mKeyguardStyleClockId) return false;
         try {
             return "keyguard_style_clock".equals(view.getResources().getResourceEntryName(view.getId()));
         } catch (Throwable ignored) {
@@ -775,12 +780,22 @@ public class AodClock extends XposedMods {
     }
 
     private void applyFontToNativeAodAncestors(View view) {
+        applyFontToNativeAodAncestors(view, false);
+    }
+
+    private void applyFontToNativeAodAncestors(View view, boolean onDraw) {
         View current = view;
         for (int i = 0; i < 8 && current != null; i++) {
             if (isNativeAodClockRoot(current)) {
-                applyFontToAodView(current);
+                // No invalidate(): this also runs from onDraw/dispatchDraw, so
+                // it would request another frame every frame (endless redraw
+                // on the lockscreen). setTypeface() invalidates when it changes.
+                if (onDraw) {
+                    applyFontToAodViewOnDraw(current);
+                } else {
+                    applyFontToAodView(current);
+                }
                 applyFontToNativeAodClockIds(current);
-                current.invalidate();
                 return;
             }
             if (!(current.getParent() instanceof View parent)) return;
@@ -1172,6 +1187,28 @@ public class AodClock extends XposedMods {
     private void applyFontToAodView() {
         applyFontToAodView(mStockAodView);
         applyFontToAodView(mRootLayout);
+    }
+
+    /**
+     * For per-frame hooks (onDraw / dispatchDraw / onLayout) only: walking the
+     * whole tree with reflection every frame is costly, so do it at most once
+     * per second per view. Event hooks (OpParsonsClock callbacks, setText,
+     * attach, time updates) must call applyFontToAodView() directly, because
+     * the stock code re-sets its own font right before them.
+     */
+    private void applyFontToAodViewOnDraw(View view) {
+        if (view == null) return;
+        Typeface typeface = loadClockTypeface(mFontStyle);
+        if (typeface == null) return;
+        if (typeface != mThrottleTypeface) {
+            mFontAppliedAt.clear();
+            mThrottleTypeface = typeface;
+        }
+        long now = android.os.SystemClock.uptimeMillis();
+        Long last = mFontAppliedAt.get(view);
+        if (last != null && now - last < FONT_REAPPLY_INTERVAL_MS) return;
+        mFontAppliedAt.put(view, now);
+        applyFontToAodView(view);
     }
 
     private void applyFontToAodView(View view) {

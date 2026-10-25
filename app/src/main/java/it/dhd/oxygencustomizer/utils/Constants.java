@@ -34,7 +34,6 @@ public final class Constants {
             public static final String PREF_MORE_LOGGING = "moreLogging";
             public static final String APP_LANGUAGE = "appLanguage";
             public static final String GLOBAL_FONT_STYLE = "global_font_style";
-            public static final String CHARGING_ANIM_DURATION = "charging_anim_duration";
         }
 
         public static class BatteryPrefs {

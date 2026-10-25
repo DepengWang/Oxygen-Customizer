@@ -953,13 +953,6 @@
     <string name="clock_font_style_clockopia">Clockopia</string>
     <string name="clock_font_style_orbitron">Orbitron</string>
     <string name="global_font_style_title">Global Font</string>
-    <string name="charging_anim_duration_title">Charging Animation Duration</string>
-    <string name="charging_anim_duration_stock">Default (14 s)</string>
-    <string name="charging_anim_duration_30s">30 seconds</string>
-    <string name="charging_anim_duration_1m">1 minute</string>
-    <string name="charging_anim_duration_2m">2 minutes</string>
-    <string name="charging_anim_duration_5m">5 minutes</string>
-    <string name="charging_anim_duration_always">Always</string>
     <!-- Kept for compatibility with other clock preference XML files. -->
     <string name="lockscreen_clock_font_custom_enabled">Use Custom font</string>
     <string name="lockscreen_clock_prefs">Lockscreen Clock Prefs</string>

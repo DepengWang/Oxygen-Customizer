@@ -44,6 +44,10 @@ import com.airbnb.lottie.RenderMode;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import it.dhd.oxygencustomizer.BuildConfig;
 import it.dhd.oxygencustomizer.R;
@@ -240,18 +244,39 @@ public class ViewHelper {
         }
     }
 
+    // Paint fields per view class, so reflection runs once per class instead
+    // of on every call (applyFontToView is used from draw hooks).
+    private static final Map<Class<?>, Field[]> sPaintFields = new ConcurrentHashMap<>();
+
     private static void applyTypefaceToPaintFields(View view, Typeface typeface) {
-        for (Class<?> type = view.getClass(); type != null && type != View.class; type = type.getSuperclass()) {
+        for (Field field : paintFieldsOf(view.getClass())) {
+            try {
+                Object value = field.get(view);
+                if (value instanceof Paint paint && paint.getTypeface() != typeface) {
+                    paint.setTypeface(typeface);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static Field[] paintFieldsOf(Class<?> viewClass) {
+        Field[] cached = sPaintFields.get(viewClass);
+        if (cached != null) return cached;
+        List<Field> fields = new ArrayList<>();
+        for (Class<?> type = viewClass; type != null && type != View.class; type = type.getSuperclass()) {
             for (Field field : type.getDeclaredFields()) {
                 if (!Paint.class.isAssignableFrom(field.getType())) continue;
                 try {
                     field.setAccessible(true);
-                    Object value = field.get(view);
-                    if (value instanceof Paint paint) paint.setTypeface(typeface);
+                    fields.add(field);
                 } catch (Throwable ignored) {
                 }
             }
         }
+        Field[] result = fields.toArray(new Field[0]);
+        sPaintFields.put(viewClass, result);
+        return result;
     }
 
     public static void applyTextMarginRecursively(ViewGroup viewGroup, int topMargin) {

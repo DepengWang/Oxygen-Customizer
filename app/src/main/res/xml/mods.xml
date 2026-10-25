@@ -112,12 +112,4 @@
         android:title="@string/global_font_style_title"
         app:iconSpaceReserved="false" />
 
-    <it.dhd.oneplusui.preference.OplusMenuPreference
-        android:defaultValue="0"
-        android:entries="@array/charging_anim_duration_entries"
-        android:entryValues="@array/charging_anim_duration_values"
-        android:key="charging_anim_duration"
-        android:title="@string/charging_anim_duration_title"
-        app:iconSpaceReserved="false" />
-
 </PreferenceScreen>

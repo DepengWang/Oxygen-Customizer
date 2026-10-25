@@ -325,17 +325,16 @@ com.oplus.aodimpl.AodRootLayout
 - `LockscreenNotificationFont`（新 mod）：`StatusBarState == KEYGUARD` 时对 `ExpandableNotificationRow` 内全部 TextView 应用全局字体（英文/数字用所选字体，中文自动回落系统字体），离开锁屏时按记录恢复原 Typeface。实测锁屏通知条 Orbitron ✔；“解锁后通知栏恢复系统字体”需人工解锁验证，未确认。锁屏媒体卡片不在范围内。
 - `ChargingAnimation`（新 mod）：
   - 字体：`ChargeLevelAndLogoView` / `FrameChargeLevelAndLogoView` 在 inflate、电量更新、字重变化后重设字体；`GradientColorTextView.onDraw` 前兜底。VOOC 跳动小数写入同一 `chargeLevelView`（`updateBatteryLevelView(III)`），已覆盖（代码确认，未实测快充）。实测普通充电“92 %” Orbitron ✔。
-  - 时长：原生 `OplusChargeAnimImpl.mDelayCancelAnimRunnable` 14 s 后关闭。拦截 `Handler.postDelayed` 中该 Runnable（身份比较），按偏好 `charging_anim_duration` 改延时或不投递（一直显示）。拔电、点击、熄屏仍会关闭。实测 5 分钟设置下 25 s 时仍显示 ✔。
-  - 菜单：模组页“全局字体”下新增“充电动画显示时长”（默认 14 秒/30 秒/1/2/5 分钟/一直显示）。
-  - 小数跳动持续：原生 `BatteryLevelToDecimalHelper`（单例，每 1 s 读 `OplusBatteryManager.getDecimalData()` 起止值并用 1 s 线性动画推进）只在 `updateChargeAnim()`（插电）时启动，且只推给一个 `mCallback` 视图。停止点：每个动画周期结束的淡出（`startLevelAndLogoFadeoutAnimation`）、内核无小数数据（起/止为 0 或止为 100）、电量 100。淡入和 `removeView()` 重建都不会重启/改绑 → 周期重来后数字冻结。修复：`updateChargeAnim`/淡入后确保循环运行并把 `mCallback` 指向当前可见视图；循环被停且视图仍在屏上时每 3 s 复查（淡出中等待，隐藏/移除/熄屏即停止）。小数只取内核真实值，内核不提供时显示原生整数。USB 普通充电下验证：循环按预期启动/重试，熄屏后重试停止，无崩溃。
+  - （已移除）充电动画显示时长设置及其全局 `Handler.postDelayed` hook；当前恢复原生时长行为，详见 11.9。
+  - 小数续跳扩展（已移除）：当前由系统原生逻辑更新充电动画电量，模块不再接管小数值或续跳循环。
   - 内核限制（实测 dmesg）：`oplus_chg_v2` 的 `/proc/ui_soc_decimal` 只在每次超充会话（2VBUS）开始时 `ui_soc_decimal_init`，`calculate_decimal_time` 到 17 即 `deinit`，之后恒为 "0, 0"；写该节点只设置 `boot_completed`，无法重新开启。唯一重新触发方式是中断/恢复充电（不采用）。
-  - 接续方案：数据通路 hook（helper 私有 `getDecimalData`、`OplusBatteryManager.getDecimalData`）会被 ART 编译/内联绕过，不可靠。改为：hook 视图 `updateBatteryLevelView(III)` 记录内核期显示值测速；`stopCalculateBatteryRate` 时由模块直接调用视图 `updatePowerFormat(1)` + `updateBatteryLevelView(...)`。（此处记录的是中间版本的步进算法，**最终算法见 11.3.4**。）
+  - 接续方案（已移除）：曾通过视图回调接管小数并估算步进；当前恢复系统原生电量更新，详见 11.9。
 
 ---
 
-## 11. 已完成工作总表（冻结基线，2026-10-25）
+## 11. 已完成工作总表（当前状态）
 
-> 本节是截至 2026-10-25 的最终完成状态，作为后续修 bug / 优化的基准，**暂不改动**。前面 10.x 是过程记录，若与本节冲突，以本节为准。
+> 本节记录功能状态和验证情况；10.x 是过程记录。后续状态调整记入本节末尾。
 > 代码基线：分支 `feature/clockopia-lockscreen-aod`，提交 `335d534`（已推送到 `origin` = `DepengWang/Oxygen-Customizer`）。个人修改，**不向上游提交 PR**；上游更新时 `git fetch upstream` 后合并进本分支。
 
 ### 11.1 功能清单与设置项
@@ -343,31 +342,30 @@ com.oplus.aodimpl.AodRootLayout
 | 功能 | 入口（模组页底部） | 偏好 key / 取值 | 默认 |
 |---|---|---|---|
 | 全局字体 | 全局字体 | `global_font_style`：`system` / `clockopia` / `orbitron` | `system` |
-| 充电动画显示时长 | 充电动画显示时长（全局字体下方） | `charging_anim_duration`（ms 字符串）：`0`=默认 14 秒、`30000`、`60000`、`120000`、`300000`、`-1`=一直显示 | `0` |
 
 全局字体作用范围（不需要先启用自定义锁屏/AOD，不改变原生布局、颜色、位置）：
 
 1. 锁屏：原生大时钟、星期、日期、天气、“Charging xx%”等附属文字。
 2. AOD（Insight 时钟样式）：中央时间（保留原生黄色）、日期、解锁次数、底部电量。
 3. 锁屏通知条：应用名、标题、时间、正文（仅锁屏状态；英文/数字用所选字体，中文自动回落系统字体）。
-4. 充电动画：电量数字（含 SuperVOOC 跳动小数）与百分号。
+4. 充电动画：电量数字与百分号，仅应用所选字体；数值变化由系统原生处理。
 
 ### 11.2 涉及文件
 
 | 文件 | 内容 |
 |---|---|
-| `app/src/main/res/xml/mods.xml` | 全局字体、充电动画显示时长两个菜单 |
-| `app/src/main/res/values/arrays.xml` | `clock_font_style_*`、`charging_anim_duration_*` 数组 |
+| `app/src/main/res/xml/mods.xml` | 全局字体菜单 |
+| `app/src/main/res/values/arrays.xml` | `clock_font_style_*` 数组 |
 | `app/src/main/res/values/strings.xml`、`values-zh-rCN/strings.xml` | 菜单文案（中英） |
 | `app/src/main/res/xml/aod_clock_prefs.xml`、`lockscreen_clock.xml` | 移除/停用原先分别设置字体的入口 |
 | `app/src/main/assets/Fonts/clockopia.ttf`、`orbitron_regular.ttf` | 内置字体 |
-| `utils/Constants.java` | `GLOBAL_FONT_STYLE`、`CHARGING_ANIM_DURATION` |
+| `utils/Constants.java` | `GLOBAL_FONT_STYLE` |
 | `xposed/ModPacks.java` | 注册 `LockscreenNotificationFont`、`ChargingAnimation` |
 | `xposed/utils/ViewHelper.java` | `applyFontToView()`：TextView + Paint 字段递归设字体，字体相同则跳过 |
 | `xposed/hooks/systemui/lockscreen/LockscreenClock.java` | 锁屏原生时钟应用全局字体 |
 | `xposed/hooks/systemui/aod/AodClock.java` | AOD 与锁屏原生时钟字体（见 11.3.1–11.3.2） |
 | `xposed/hooks/systemui/lockscreen/LockscreenNotificationFont.java` | 锁屏通知字体（新） |
-| `xposed/hooks/systemui/lockscreen/ChargingAnimation.java` | 充电动画字体、时长、小数持续跳动（新） |
+| `xposed/hooks/systemui/lockscreen/ChargingAnimation.java` | 仅应用充电动画字体 |
 
 ### 11.3 实现要点
 
@@ -393,23 +391,8 @@ com.oplus.aodimpl.AodRootLayout
 
 #### 11.3.4 充电动画（`ChargingAnimation.java`）
 
-1. **字体**：`ChargeLevelAndLogoView` / `FrameChargeLevelAndLogoView` 在 `onFinishInflate`、`onConfigurationChanged`、`setLevelVariationSettings`、`setOplusFontVariationSettings`、`setTypeFace`、`updateBatteryLevelView`、`updateChargeAnim`、`startLevelAndLogoFadeinAnimation` 之后重设字体；`GradientColorTextView.onDraw` 前字体不同才设置。
-2. **显示时长**：原生 `OplusChargeAnimImpl.mDelayCancelAnimRunnable` 在 14 s 后关闭动画。全局 hook `Handler.postDelayed`，仅当 Runnable 与该对象**身份相同**时修改延时；“一直显示”则不投递。拔电、点击屏幕、熄屏仍按原生关闭。
-3. **周期与数字冻结的原因**：
-   - 闪光动画周期约 21 s（VFX 引擎内部 `onFlashAnimationFinishedCallBack`），每周期数字区域重新淡入。
-   - 原生小数循环 `BatteryLevelToDecimalHelper` 只在插电时（`updateChargeAnim`）启动，淡出/内核无数据时停止，且只推给一个回调视图。
-   - **内核限制**：`/proc/ui_soc_decimal`（`oplus_chg_v2`）每次超充会话只提供约 17 s 小数，之后恒为 `0, 0`，用户层无法重新开启（见 10.10）。
-4. **循环维护**：`updateChargeAnim` / 淡入后（延时 300 ms）确保循环运行、回调指向当前可见视图；循环被停且视图仍在屏上时每 3 s 复查（淡出中等待，隐藏/移除/熄屏停止）。
-5. **17 s 后的小数接续**（模块直接驱动视图，不依赖会被 ART 内联的数据通路 hook）：
-   - 触发：`stopCalculateBatteryRate` 被调用、已有本次会话的测速、视图正在显示。
-   - 每步只走 **0.01**；状态栏真实整数电量变化（`BATTERY_PROPERTY_CAPACITY`）时立即从新整数的 **.01** 开始；走到 .99 而真实整数未变时停在 .99，不越过状态栏。
-   - 步进间隔 = `每 1% 所需电荷 ÷ 实时充入速度 ÷ 100 × 放慢系数`，限制在 0.2–10 s：
-     - 实时充入速度：`BATTERY_PROPERTY_CHARGE_COUNTER`（µAh）在最近 10–60 s 且增量 ≥ 3 mAh 的窗口内计算；内核 17 s 期间就开始采样。
-     - 每 1% 所需电荷：初值 `累计电荷 ÷ 当前电量%`；每次真实 +1% 时按实测值更新（新 70% / 旧 30%）。
-     - 放慢系数：测到第一次完整真实 1% 前为 1.4，之后为 1.15；小数超过 .80 后再逐步放慢，.99 时为 4 倍（缓出，避免卡在 .99）。
-     - 兜底（电荷数据不足时）：用“每 1% 秒数”（初值来自内核期测速，按真实 1% 耗时 70/30 更新）并按充电电流比例（0.5–2 倍）修正。
-   - 接续期间把 helper 的 `mCurrentStatus` 置 1，防止原生整数路径覆盖小数；原生循环不再重启。
-   - 停止：点击屏幕、熄屏、视图隐藏/移除、电量 ≥ 100；拔电（`ACTION_POWER_DISCONNECTED`）清空本次会话的全部测速数据。
+- 仅对充电动画电量文字应用全局字体：在原生字体更新回调之后重设字体，并在 `GradientColorTextView.onDraw` 前检查字体。
+- 动画显示时长、整数/小数电量更新均交由系统原生实现；模块不 hook `Handler.postDelayed`，不接管或估算小数循环。
 
 ### 11.4 验证结果（OnePlus 12 / OxygenOS 16，Orbitron）
 
@@ -420,9 +403,6 @@ com.oplus.aodimpl.AodRootLayout
 | AOD 息屏 20 s 内 SystemUI 绘制帧数 | 0（无重绘循环）✔ |
 | 锁屏通知条字体 | ✔ |
 | 充电动画数字字体（普通充电） | ✔ |
-| 充电动画显示时长（5 分钟设置，25 s 时仍显示） | ✔ |
-| SuperVOOC 17 s 后小数继续跳动、跨闪光周期不冻结 | ✔（用户确认“差不多”） |
-| 真实进位时小数位置（第一个 1%） | 实测进位时在 .92，未卡 .99 ✔ |
 | SystemUI 启动崩溃修复 | 修复后连续 9 次重启 0 崩溃 ✔ |
 | 最终版锁屏、AOD 截图复查 | ✔，无新崩溃 |
 
@@ -432,10 +412,8 @@ com.oplus.aodimpl.AodRootLayout
 2. 切回“系统字体”能否完全恢复原生显示：未验证（部分路径可能需重启 SystemUI 才完全恢复）。
 3. 锁屏通知“解锁后通知栏恢复系统字体”：未人工验证。锁屏媒体卡片不在范围内。
 4. 安装新 APK 后的头 1–2 次 SystemUI 启动仍可能出现同类 GC 崩溃后自动恢复（疑为 Vector 刷新模块过渡期）。
-5. `Handler.postDelayed` 是全局 hook（仅做身份比较），若将来出现 SystemUI 卡顿/崩溃，优先改为更局部的实现。
-6. 充电小数：第一个 1% 偶尔仍可能在 .9x 停顿数秒；17 s 后的小数为模块按电量计数据估算（内核原值同样是电流/容量估算）。
-7. 仅验证了 Insight（OpParsonsClock）AOD 样式；其他 AOD 样式、12 小时制、长时间功耗对比均未测。
-8. 一次锁屏截图中时钟偏灰，推测为充电动画淡入时的背景压暗，未确认。
+5. 仅验证了 Insight（OpParsonsClock）AOD 样式；其他 AOD 样式、12 小时制、长时间功耗对比均未测。
+6. 一次锁屏截图中时钟偏灰，推测为充电动画淡入时的背景压暗，未确认。
 
 ### 11.6 构建、安装与排障方法
 
@@ -448,7 +426,7 @@ com.oplus.aodimpl.AodRootLayout
 
 ### 11.7 回退方法
 
-- 不影响数据的快速回退：模组页把“全局字体”设为系统字体、“充电动画显示时长”设为默认，然后重启 SystemUI。
+- 不影响数据的快速回退：模组页把“全局字体”设为系统字体，然后重启 SystemUI。
 - 完全停用：在 Vector 中取消模块对 SystemUI 的作用域或停用模块，重启 SystemUI；无需清除数据。
 - 代码回退：`git revert 335d534` 或切回 `beta` 分支重新构建安装。
 
@@ -456,3 +434,24 @@ com.oplus.aodimpl.AodRootLayout
 
 - 工作区仍保留调试产物（反编译 APK、dexdump、截图、`personality_extract/`、`plugin-apk/`、`style-apk/`、`systemui-apk/`、`.gradle-home/`），未提交、未删除，可作为对照证据；清理前先确认不再需要。
 - 手机 `/data/tombstones/` 中保留了历史崩溃记录（12:16 起），未删除。
+
+### 11.9 充电动画恢复原生时长和数值更新（2026-10-25）
+
+- 用户要求充电动画仅保留字体处理，动画时长和电量数值变化恢复系统原生行为。
+- 删除 `Handler.postDelayed` 全局 hook、偏好常量、时长菜单及资源，并移除模块自定义的小数采样、接管、续跳和重试逻辑；充电字体 hook 保留。
+- 历史记录 10.10 中曾验证的定时行为仅供历史参考；当前版本不再提供或实施该功能。
+- 最终代码构建成功（`:app:assembleDebug`），ADB server 重启后重新识别 OnePlus 12（CPH2573），已安装 `beta-210.debug`。
+- 安装后仅重启 SystemUI：PID 从 `21518` 变为 `12731`，确认旧进程退出、新进程启动；本次未用秒表实测动画实际时长，代码现由系统原生逻辑控制（原生时长记录约 14 s）。
+
+### 11.10 SystemUI 全局 hook 耗电优化（2026-10-25）
+
+- 背景：`AodClock` 在 SystemUI 中挂了全局 hook（所有 `TextView` 的 `onDraw` / `setText` / `setTypeface`，所有 `ViewGroup` / `FrameLayout` 的 `dispatchDraw` 等），每帧都会触发。
+- 修复的问题：
+  - `applyFontToNativeAodAncestors()` 在 `onDraw` 路径里对时钟根视图调用 `invalidate()`，锁屏亮屏期间形成“绘制→请求重绘”的持续重绘。已去掉；字体真正变化时 `setTypeface()` 会自行触发重绘。
+  - 删除重复的绘制后 hook（`TextView.onDraw`、`ViewGroup` / `FrameLayout.dispatchDraw`、`CustomOplusKeyguardStyleClock.onDraw` 的 after）。
+- 降低热路径开销：
+  - `isNativeAodClockRoot()`：`keyguard_style_clock` 的 id 只解析一次，先做整数比较，整数匹配时再用名称确认（插件 id 可能与 SystemUI 的 0x7f id 撞号）。
+  - `getNativeAodClockTextId()`：按 `Resources` 分别缓存 id → 名称。
+  - `ViewHelper.applyTypefaceToPaintFields()`：每个类的 `Paint` 字段只反射扫描一次；字体相同则不重设。
+  - 新增 `applyFontToAodViewOnDraw()`：**仅用于每帧触发的绘制类 hook**（`onDraw` / `dispatchDraw` / `onLayout`），同一视图每秒最多整树重设一次，字体切换时立即失效。**事件类 hook**（`OpParsonsClock` 的 `applyLayoutParams` / `onTimeChanged` / `updateResource` / `onAttachedToWindow`、`setText`、挂载、`performTimeUpdate`）必须调用不限频的 `applyFontToAodView()`：原生代码会在这些时机重设自己的字体，若被限频跳过，AOD 中间时间/日期会变回原生字体（曾出现该回归，已修正）。
+- 验证：AOD 中间时间、日期、解锁次数、底部电量均为 Orbitron，跨分钟刷新后保持；SystemUI 无崩溃。桌面场景粗测 SystemUI CPU 由约 20% 降到 7–9%（未确认采样时音乐仍在播放，降幅可能偏高）；锁屏亮屏场景因亮屏后自动解锁，尚未复测。
