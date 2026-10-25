@@ -25,6 +25,7 @@ public final class Constants {
         public static final String TELECOM_SERVER_PACKAGE = "com.android.server.telecom";
         public static final String LAUNCHER = "com.android.launcher";
         public static final String SETTINGS = "com.android.settings";
+        public static final String INCALLUI = "com.android.incallui";
     }
 
     public static class Preferences {
@@ -34,6 +35,7 @@ public final class Constants {
             public static final String PREF_MORE_LOGGING = "moreLogging";
             public static final String APP_LANGUAGE = "appLanguage";
             public static final String GLOBAL_FONT_STYLE = "global_font_style";
+            public static final String INCALL_DIALPAD_HEIGHT = "incall_dialpad_height";
         }
 
         public static class BatteryPrefs {

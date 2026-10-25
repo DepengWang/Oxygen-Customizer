@@ -953,6 +953,7 @@
     <string name="clock_font_style_clockopia">Clockopia</string>
     <string name="clock_font_style_orbitron">Orbitron</string>
     <string name="global_font_style_title">Global Font</string>
+    <string name="incall_dialpad_height_title">In-call Dialpad Height</string>
     <!-- Kept for compatibility with other clock preference XML files. -->
     <string name="lockscreen_clock_font_custom_enabled">Use Custom font</string>
     <string name="lockscreen_clock_prefs">Lockscreen Clock Prefs</string>

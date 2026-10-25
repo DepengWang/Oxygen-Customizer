@@ -478,3 +478,22 @@ com.oplus.aodimpl.AodRootLayout
 - 删除死代码：类加载器为 `null` 后不再生效的 KeyguardClockBase / PersonalityClocks / HDR 静态 hook 及其辅助方法和日志；`NativeTextView` 一组与全局 `TextView` hook 完全重复的 hook（同一方法被挂两次）。
 - 新增 `xposed/utils/GlobalFontHelper`：`AodClock`、`LockscreenClock`、`ChargingAnimation`、`LockscreenNotificationFont` 共用一个按样式缓存的 Typeface（只读一次字体文件、同一实例），替换原来四份重复的加载代码。
 - 验证：安装后重启 SystemUI 0 崩溃；锁屏（时钟、星期、日期、天气、充电文字、通知条）与 AOD（时间、日期、解锁次数、电量）均为 Orbitron，锁屏跨分钟（7:42→7:44）后保持。锁屏静止时 SystemUI CPU 优化前后均约 10–14%：静止画面下开销主要不在这些 hook，被删除的每帧 hook 的收益体现在下拉通知栏、滚动、动画等频繁重绘场景（未单独测量）。AOD 跨分钟后的截图因设备断开未取得，此前同类改动已验证 AOD 跨分钟刷新正常。
+
+### 11.13 LSPosed“模块使用了已废弃的功能”警告（2026-10-25）
+
+- 现象：LSPosed 管理器在 Oxygen Customizer 上显示“此模块使用了已废弃且即将移除的功能，请联系作者或考虑替代方案”。
+- 根因（反编译 LSPosed v2.2.1 (7912) 的管理器与守护进程确认）：模块声明 `xposedminversion=93`（大于 92），LSPosed 会把它的 SharedPreferences 重定向到 `/data/misc/apexdata/49f76e41-25e7-4f73-bb5a-1a7cdba8a5b4/prefs/it.dhd.oxygencustomizer/`，并检查该目录中是否有“其他用户可读”的 `*.xml`（旧版 XSharedPreferences 世界可读方式）；只要有一个，就标记为使用了已废弃功能。当时 `it.dhd.oxygencustomizer.xml` 与 `WebViewChromiumPrefs.xml` 权限为 `rwxr--r--`（2026-10-25 上午生成，推测来自框架切换）。
+- 与模块代码无关：代码中的 SharedPreferences 均为 `MODE_PRIVATE`，也没有修改这些文件权限的逻辑；Hook 侧读取设置走 RemotePreferences，不需要可读权限。删除功能或改用新版 libxposed API 都不是解决办法。
+- 处理：将两个文件改为 `660`（`chmod 660 it.dhd.oxygencustomizer.xml WebViewChromiumPrefs.xml`），重新打开管理器后警告消失。若再出现，先检查该目录下文件权限，再查是什么把权限改回去的。
+
+### 11.14 通话拨号键盘高度（2026-10-25）
+
+- 需求：通话中打开数字键盘时键盘太高，缩小到原高度的 3/4。
+- 结构（OOS16 `com.android.incallui`，`/product/priv-app/InCallUI/InCallUI.apk`）：键盘为 `oplus_dialpad_fragment` 中的 `com.android.incallui.mvvm.widget.DialpadRecyclerView`；每个键是一行 `item_dialpad_button`（`FrameLayout`，上下各 `oplus_numeric_keyboard_item_margin_vertical` 8dp），内含固定直径（`oplus_numeric_keyboard_circle_diameter` 66dp）的 `TalkBackConstraintLayout` 圆形按键。默认拨号器为 OPlus `com.android.contacts`，未改动。
+- 实现：
+  - 新增 `xposed/hooks/incallui/InCallDialpad.java`：在 `DialpadRecyclerView.onLayout` 之后（由框架调用，不会被 ART 内联绕过）处理每一行：行高 = 按键直径 × 比例，上下间距 × 比例；按键以顶部中点为轴等比缩放，保持圆形，触控区域随之缩放。原始行高和间距保存在 `WeakHashMap` 中，选 100% 时还原。修改后 `post` 一次 `requestLayout`，在下一帧生效。
+  - 菜单：模块主页“全局字体”下方新增“通话拨号键盘高度”（`incall_dialpad_height`，100% / 90% / 80% / 75% / 70%，默认 100% 即不改动）。
+  - 作用域：`xposed_scope` 增加 `com.android.incallui`（需在 LSPosed 管理器中手动勾选“通话”）；`Constants.Packages.INCALLUI`；`ModPacks` 注册。
+  - `XPLauncher`：incallui 进程不常驻、随通话启动，因此它在后台线程等待 Xprefs 加载（同 framework 的做法），不阻塞来电界面显示；其他应用加载方式不变。
+- 验证（拨打 10086，打开拨号键盘，75%）：四行键盘高度由约 1240 px 降到约 930 px（3168 px 高屏幕），按键为圆形，下方“听筒 / 挂断 / 拨号盘”按钮不受影响。截图中第一行上方及 4/5/6 后有金色空心圆环，疑为打开键盘时的入场动画（按原尺寸计算位置），用户确认无问题；若之后发现圆环常驻，需要同时缩放该动画。
+- 回退：菜单选 100%，或在 LSPosed 中取消勾选“通话”。

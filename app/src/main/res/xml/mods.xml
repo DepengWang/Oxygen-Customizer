@@ -112,4 +112,12 @@
         android:title="@string/global_font_style_title"
         app:iconSpaceReserved="false" />
 
+    <it.dhd.oneplusui.preference.OplusMenuPreference
+        android:defaultValue="100"
+        android:entries="@array/incall_dialpad_height_entries"
+        android:entryValues="@array/incall_dialpad_height_values"
+        android:key="incall_dialpad_height"
+        android:title="@string/incall_dialpad_height_title"
+        app:iconSpaceReserved="false" />
+
 </PreferenceScreen>

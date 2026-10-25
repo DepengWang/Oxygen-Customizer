@@ -1343,4 +1343,5 @@
     <!-- Separate qs tweaks -->
     <!-- Separate qs layout -->
     <string name="global_font_style_title">全局字体</string>
+    <string name="incall_dialpad_height_title">通话拨号键盘高度</string>
 </resources>

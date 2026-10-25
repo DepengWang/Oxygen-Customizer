@@ -104,7 +104,12 @@ public class XPLauncher implements ServiceConnection {
 
                             XPrefs.init(mContext);
 
-                            waitForXprefsLoad(lpparam);
+                            if (lpparam.packageName.equals(Constants.Packages.INCALLUI)) {
+                                // InCallUI starts with the call screen; don't hold it until prefs load
+                                CompletableFuture.runAsync(() -> waitForXprefsLoad(lpparam));
+                            } else {
+                                waitForXprefsLoad(lpparam);
+                            }
                         }
                     } catch (Throwable t) {
                         // Context is null

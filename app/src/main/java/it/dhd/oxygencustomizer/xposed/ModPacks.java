@@ -14,6 +14,7 @@ import it.dhd.oxygencustomizer.xposed.hooks.framework.MemcEnhancer;
 import it.dhd.oxygencustomizer.xposed.hooks.framework.OplusStartingWindowManager;
 import it.dhd.oxygencustomizer.xposed.hooks.framework.PackageManager;
 import it.dhd.oxygencustomizer.xposed.hooks.framework.SleepOnFlat;
+import it.dhd.oxygencustomizer.xposed.hooks.incallui.InCallDialpad;
 import it.dhd.oxygencustomizer.xposed.hooks.launcher.CustomNavGestures;
 import it.dhd.oxygencustomizer.xposed.hooks.launcher.DockBackground;
 import it.dhd.oxygencustomizer.xposed.hooks.launcher.Launcher;
@@ -210,6 +211,7 @@ public class ModPacks {
                 modPacks.add(RecentsMenu.class);
 
             }
+            case Constants.Packages.INCALLUI -> modPacks.add(InCallDialpad.class);
         }
 
         return modPacks;
