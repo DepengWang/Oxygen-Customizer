@@ -454,4 +454,4 @@ com.oplus.aodimpl.AodRootLayout
   - `getNativeAodClockTextId()`：按 `Resources` 分别缓存 id → 名称。
   - `ViewHelper.applyTypefaceToPaintFields()`：每个类的 `Paint` 字段只反射扫描一次；字体相同则不重设。
   - 新增 `applyFontToAodViewOnDraw()`：**仅用于每帧触发的绘制类 hook**（`onDraw` / `dispatchDraw` / `onLayout`），同一视图每秒最多整树重设一次，字体切换时立即失效。**事件类 hook**（`OpParsonsClock` 的 `applyLayoutParams` / `onTimeChanged` / `updateResource` / `onAttachedToWindow`、`setText`、挂载、`performTimeUpdate`）必须调用不限频的 `applyFontToAodView()`：原生代码会在这些时机重设自己的字体，若被限频跳过，AOD 中间时间/日期会变回原生字体（曾出现该回归，已修正）。
-- 验证：AOD 中间时间、日期、解锁次数、底部电量均为 Orbitron，跨分钟刷新后保持；SystemUI 无崩溃。桌面场景粗测 SystemUI CPU 由约 20% 降到 7–9%（未确认采样时音乐仍在播放，降幅可能偏高）；锁屏亮屏场景因亮屏后自动解锁，尚未复测。
+- 验证：AOD 中间时间、日期、解锁次数、底部电量均为 Orbitron，跨分钟刷新后保持；SystemUI 无崩溃。桌面场景粗测 SystemUI CPU 由约 20% 降到 7–9%（未确认采样时音乐仍在播放，降幅可能偏高）；锁屏亮屏场景复测：SystemUI 约 12–15%（主线程约 12%、渲染线程约 10%），优化前为 54–68%；但优化前测量时音乐在播放（状态栏胶囊波形动画），复测时音乐暂停，两次条件不完全相同，降幅中有一部分来自动画差异。安装新 APK 后首次启动仍出现 1 次已知的 GC 崩溃（见 11.5 第 4 条），随后正常。
