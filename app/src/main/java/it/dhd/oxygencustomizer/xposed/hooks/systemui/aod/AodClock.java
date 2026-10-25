@@ -81,6 +81,7 @@ import it.dhd.oxygencustomizer.R;
 import it.dhd.oxygencustomizer.utils.Constants;
 import it.dhd.oxygencustomizer.xposed.ResourceManager;
 import it.dhd.oxygencustomizer.xposed.XposedMods;
+import it.dhd.oxygencustomizer.xposed.utils.GlobalFontHelper;
 import it.dhd.oxygencustomizer.xposed.utils.CircleFramedDrawable;
 import it.dhd.oxygencustomizer.xposed.utils.DrawableConverter;
 import it.dhd.oxygencustomizer.xposed.utils.SystemUtils;
@@ -94,8 +95,6 @@ public class AodClock extends XposedMods {
     public static final String OC_AOD_CLOCK_TAG = "oxygencustomizer_aod_clock";
     private static final String listenPackage = Constants.Packages.SYSTEM_UI;
     private static final String FONT_STYLE_SYSTEM = "system";
-    private static final String FONT_STYLE_CLOCKOPIA = "clockopia";
-    private static final String FONT_STYLE_ORBITRON = "orbitron";
     Class<?> LottieAn = null;
     private ViewGroup mRootLayout = null;
     private Context appContext;
@@ -104,7 +103,6 @@ public class AodClock extends XposedMods {
     private boolean mCustomColor, mCustomImage, mCustomUserImage;
     private String mFontStyle = FONT_STYLE_SYSTEM;
     private View mStockAodView;
-    private boolean mNativeAodHookLogged;
     private boolean mNativeAodTextHookLogged;
     private boolean mApplyingNativeTypeface;
     private boolean mApplyingAodFont;
@@ -117,8 +115,6 @@ public class AodClock extends XposedMods {
     private final Map<android.content.res.Resources, android.util.SparseArray<String>> mClockTextIdNames =
             new WeakHashMap<>();
     private boolean mNativeAodDiagnosticLogged;
-    private boolean mNativeClockFontPathLogged;
-    private boolean mNativeClockFontStateLogged;
     private boolean mNativeThemeHookLogged;
     private static final String NATIVE_CLOCK_TIME_VIEW_CLASS =
             "com.oplus.keyguard.clock.base.ui.view.ClockTimeView";
@@ -130,8 +126,6 @@ public class AodClock extends XposedMods {
             "clock_time_symbol_text",
             "clock_time_minutes_txt"
     };
-    private String mCachedTypefaceStyle;
-    private Typeface mCachedTypeface;
     // ThemeClockHelper must be hooked in the ClassLoader SystemUI actually
     // uses for the clock plugin, which can differ from createPackageContext().
     private final Set<ClassLoader> mHookedNativeClockLoaders =
@@ -307,12 +301,6 @@ public class AodClock extends XposedMods {
                 .after("onAttachedToWindow")
                 .run(param -> applyFontToNativeAodTextView((TextView) param.thisObject));
         SystemUiTextView
-                .after("onLayout")
-                .run(param -> applyFontToNativeAodTextView((TextView) param.thisObject));
-        SystemUiTextView
-                .before("onDraw")
-                .run(param -> applyFontToNativeAodTextView((TextView) param.thisObject));
-        SystemUiTextView
                 .after("setText")
                 .run(param -> {
                     TextView textView = (TextView) param.thisObject;
@@ -327,54 +315,11 @@ public class AodClock extends XposedMods {
                 .after("setTypeface")
                 .run(param -> applyFontToNativeAodTextView((TextView) param.thisObject));
 
-        // The stock AOD clock is a FrameLayout tree and OOS can recreate or
-        // restyle its children without another attach callback. Applying at
-        // dispatchDraw guarantees the selected typeface is present immediately
-        // before the native clock is rendered.
-        ReflectedClass SystemUiViewGroup = ReflectedClass.of(ViewGroup.class);
-        SystemUiViewGroup
-                .before("dispatchDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (isNativeAodClockRoot(view)) {
-                        applyFontToAodViewOnDraw(view);
-                        applyFontToNativeAodClockIds(view);
-                    }
-                });
-
-        // The OOS 16 keyguard_style_clock root is an actual FrameLayout
-        // override, so hooking ViewGroup.dispatchDraw alone does not catch
-        // its render pass. Apply the font at this concrete root as well.
-        ReflectedClass SystemUiFrameLayout = ReflectedClass.of(FrameLayout.class);
-        SystemUiFrameLayout
-                .after("onAttachedToWindow")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (!isNativeAodClockRoot(view)) return;
-                    mStockAodView = view;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodClockIds(view);
-                    XposedBridge.log("[OxygenCustomizer-AOD] native FrameLayout root attached");
-                });
-        SystemUiFrameLayout
-                .before("dispatchDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (!isNativeAodClockRoot(view)) return;
-                    applyFontToAodViewOnDraw(view);
-                    applyFontToNativeAodClockIds(view);
-                });
-
-        // OOS 16 hosts the native AOD clock content in this vendor layout.
-        // Hooking it directly catches redraws after the device enters Dozing.
-        ReflectedClass NativeAodLayout = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.base.common.widget.WrapGridLayout",
-                lpparam.classLoader
-        );
-        ReflectedClass NativeOplusKeyguardStyleClock = ReflectedClass.ofIfPossible(
-                "com.oplus.systemui.keyguard.view.CustomOplusKeyguardStyleClock",
-                lpparam.classLoader
-        );
+        // Per-frame hooks (TextView.onDraw/onLayout, ViewGroup/FrameLayout
+        // dispatchDraw, WrapGridLayout, CustomOplusKeyguardStyleClock draw) were
+        // removed to cut SystemUI CPU: fonts are re-applied on the events where
+        // the stock code resets them (setText / setTypeface / attach / time
+        // updates), and the AOD engine is handled in ensureAodEngineHooks().
         ReflectedClass NativeOplusKeyguardStyleClockBase = ReflectedClass.ofIfPossible(
                 "com.oplus.keyguard.OplusKeyguardStyleClock",
                 lpparam.classLoader
@@ -392,316 +337,16 @@ public class AodClock extends XposedMods {
                         view.invalidate();
                     });
                 });
-        NativeOplusKeyguardStyleClock
-                .before("onDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    applyFontToAodViewOnDraw(view);
-                    applyFontToNativeAodAncestors(view, true);
-                });
-        NativeOplusKeyguardStyleClock
-                .before("dispatchDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    applyFontToAodViewOnDraw(view);
-                    applyFontToNativeAodAncestors(view, true);
-                });
-        Log.i("OxygenCustomizer-AOD", "WrapGridLayout class found=" + (NativeAodLayout.getClazz() != null));
-        NativeAodLayout
-                .before("dispatchDraw")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (isDescendantOfNativeAodClock(view)) {
-                        applyFontToAodViewOnDraw(view);
-                        if (!mNativeAodHookLogged) {
-                            mNativeAodHookLogged = true;
-                            Log.i("OxygenCustomizer-AOD", "Native AOD draw hit, font=" + mFontStyle);
-                        }
-                    }
-                });
-        NativeAodLayout
-                .after("onLayout")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    if (isDescendantOfNativeAodClock(view)) applyFontToAodViewOnDraw(view);
-                });
-
-        // Do NOT load the clock plugins through createPackageContext(
-        // CONTEXT_INCLUDE_CODE): that loads KeyguardClockBase / PersonalityClocks
-        // a second time in a separate ClassLoader (a second DexCache for the same
-        // dex) and hooking those duplicate classes was followed by SystemUI GC
-        // aborts ("GC tried to mark invalid reference") a few seconds after
-        // start. The classes SystemUI really uses are hooked in their actual
-        // ClassLoader instead (ensureNativeClockHooks / ensureAodEngineHooks).
-        // With a null loader the lookups below find nothing and hook nothing.
-        ClassLoader clockBaseClassLoader = null;
-
-        ReflectedClass NativeClockTimeView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.base.ui.view.ClockTimeView", clockBaseClassLoader
-        );
-        ReflectedClass NativeClockContainer = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.base.ui.view.ClockContainer", clockBaseClassLoader
-        );
-        ReflectedClass NativeClockViewRoot = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.base.ui.view.ClockViewRoot", clockBaseClassLoader
-        );
-        ReflectedClass NativeCustomizedTextView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.base.widget.CustomizedTextView", clockBaseClassLoader
-        );
-        ReflectedClass NativeThemeClockHelper = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.base.util.ThemeClockHelper", clockBaseClassLoader
-        );
-        ReflectedClass NativeTextView = ReflectedClass.ofIfPossible(
-                "android.widget.TextView", lpparam.classLoader
-        );
-        // Not loaded through createPackageContext() any more, see clockBaseClassLoader.
-        ClassLoader personalityClockClassLoader = null;
-        ReflectedClass NativeBigClockContainer = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.ui.view.ClockContainer", personalityClockClassLoader
-        );
-        ReflectedClass NativeBigClockViewRoot = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.ui.view.ClockViewRoot", personalityClockClassLoader
-        );
-        ReflectedClass NativeBigSingleClockView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.ui.view.SingleClockView", personalityClockClassLoader
-        );
-        ReflectedClass NativeBigClockTimeView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.ui.view.ClockTimeView", personalityClockClassLoader
-        );
-        ReflectedClass NativeBigDigitalTimeView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.ui.view.BigClockDigitalTimeView", personalityClockClassLoader
-        );
-        ReflectedClass NativeBigDateMessageView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.ui.view.DateMessageView", personalityClockClassLoader
-        );
-        ReflectedClass NativeBigCustomizedTextView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.big.widget.MyCustomizedTextView", personalityClockClassLoader
-        );
-        ReflectedClass NativeCommonCustomizedTextView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.common.widget.CustomizedTextView", personalityClockClassLoader
-        );
-        ReflectedClass NativeOplusHdrTextView = ReflectedClass.ofIfPossible(
-                "com.oplus.keyguard.clock.style.plugin.view.hdr.OplusHDRTextView",
-                clockBaseClassLoader != null ? clockBaseClassLoader : personalityClockClassLoader
-        );
-        XposedBridge.log("[OxygenCustomizer-AOD] ClockBase classes: timeView="
-                + (NativeClockTimeView.getClazz() != null)
-                + ", container=" + (NativeClockContainer.getClazz() != null)
-                + ", root=" + (NativeClockViewRoot.getClazz() != null)
-                + ", text=" + (NativeCustomizedTextView.getClazz() != null)
-                + ", theme=" + (NativeThemeClockHelper.getClazz() != null)
-                + ", androidText=" + (NativeTextView.getClazz() != null)
-                + ", bigContainer=" + (NativeBigClockContainer.getClazz() != null)
-                + ", bigRoot=" + (NativeBigClockViewRoot.getClazz() != null)
-                + ", bigSingle=" + (NativeBigSingleClockView.getClazz() != null)
-                + ", bigTime=" + (NativeBigClockTimeView.getClazz() != null)
-                + ", bigDigital=" + (NativeBigDigitalTimeView.getClazz() != null)
-                + ", bigDate=" + (NativeBigDateMessageView.getClazz() != null)
-                + ", bigText=" + (NativeBigCustomizedTextView.getClazz() != null)
-                + ", commonText=" + (NativeCommonCustomizedTextView.getClazz() != null)
-                + ", hdrText=" + (NativeOplusHdrTextView.getClazz() != null));
-
-        NativeClockTimeView
-                .before("dispatchDraw")
-                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
-        NativeClockTimeView
-                .after("dispatchDraw")
-                .run(param -> applyFontToNativeClockTimeView((View) param.thisObject));
-        NativeClockTimeView
-                .after("onFinishInflate")
-                .run(param -> applyFontToAodView((View) param.thisObject));
-        NativeClockTimeView
-                .after("render")
-                .run(param -> {
-                    applyFontToNativeClockTimeView((View) param.thisObject);
-                    applyFontToNativeAodAncestors((View) param.thisObject);
-                    logNativeClockTimeFontState((View) param.thisObject);
-                });
-        NativeClockTimeView
-                .before("setFontStyle")
-                .run(param -> {
-                    Typeface typeface = loadClockTypeface(mFontStyle);
-                    if (typeface != null && param.args != null && param.args.length > 1) {
-                        param.args[1] = typeface;
-                        if (!mNativeClockFontPathLogged) {
-                            mNativeClockFontPathLogged = true;
-                            XposedBridge.log("[OxygenCustomizer-AOD] ClockTimeView.setFontStyle hit, font="
-                                    + mFontStyle);
-                        }
-                    }
-                });
-        NativeClockTimeView
-                .after("setFontStyle")
-                .run(param -> {
-                    applyFontToNativeClockTimeView((View) param.thisObject);
-                    logNativeClockFontState((View) param.thisObject, "after setFontStyle");
-                });
-        NativeClockContainer
-                .before("dispatchDraw")
-                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
-        NativeClockContainer
-                .after("setFontStyle")
-                .run(param -> applyFontToAodView((View) param.thisObject));
-        NativeClockViewRoot
-                .before("dispatchDraw")
-                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
-        NativeClockViewRoot
-                .after("setFontStyle")
-                .run(param -> applyFontToAodView((View) param.thisObject));
-        NativeCustomizedTextView
-                .after("onAttachedToWindow")
-                .run(param -> applyFontToAodView((View) param.thisObject));
-        NativeCustomizedTextView
-                .before("onDraw")
-                .run(param -> applyFontToAodViewOnDraw((View) param.thisObject));
-        NativeCustomizedTextView
-                .after("setText")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodAncestors(view);
-                });
-        NativeCustomizedTextView
-                .after("tryUpdateText")
-                .run(param -> {
-                    View view = (View) param.thisObject;
-                    applyFontToAodView(view);
-                    applyFontToNativeAodAncestors(view);
-                });
-        NativeCustomizedTextView
-                .after("setFontStyle")
-                .run(param -> applyFontToAodView((View) param.thisObject));
-        NativeCustomizedTextView
-                .after("setHdrEnabled")
-                .run(param -> applyFontToAodView((View) param.thisObject));
-        NativeCustomizedTextView
-                .before("setFontStyle")
-                .run(param -> {
-                    Typeface typeface = loadClockTypeface(mFontStyle);
-                    if (typeface != null && param.args != null && param.args.length > 1) {
-                        param.args[1] = typeface;
-                    }
-                });
-        hookNativeThemeClockHelper(NativeThemeClockHelper);
-        NativeTextView
-                .before("onAttachedToWindow")
-                .run(param -> {
-                    if (param.thisObject instanceof TextView textView
-                            && isNativeAodClockTextId(textView)) {
-                        applyFontToNativeAodTextView(textView);
-                    }
-                });
-        NativeTextView
-                .before("onDraw")
-                .run(param -> {
-                    if (param.thisObject instanceof TextView textView
-                            && isNativeAodClockTextId(textView)) {
-                        applyFontToNativeAodTextView(textView);
-                        if (!mNativeAodTextHookLogged) {
-                            mNativeAodTextHookLogged = true;
-                            XposedBridge.log("[OxygenCustomizer-AOD] native TextView onDraw hit, id="
-                                    + getNativeAodClockTextId(textView) + ", font=" + mFontStyle);
-                        }
-                    }
-                });
-        NativeTextView
-                .after("setTypeface")
-                .run(param -> {
-                    if (param.thisObject instanceof TextView textView
-                            && isNativeAodClockTextId(textView)) {
-                        applyFontToNativeAodTextView(textView);
-                        applyFontToNativeAodAncestors(textView);
-                        if (!mNativeAodTextHookLogged) {
-                            mNativeAodTextHookLogged = true;
-                            XposedBridge.log("[OxygenCustomizer-AOD] native TextView setTypeface hit, id="
-                                    + getNativeAodClockTextId(textView) + ", font=" + mFontStyle);
-                        }
-                    }
-                });
-        NativeTextView
-                .after("setText")
-                .run(param -> {
-                    if (param.thisObject instanceof TextView textView
-                            && isNativeAodClockTextId(textView)) {
-                        applyFontToNativeAodTextView(textView);
-                    }
-                });
-        hookBigClockView(NativeBigClockContainer);
-        hookBigClockView(NativeBigClockViewRoot);
-        hookBigClockView(NativeBigSingleClockView);
-        hookBigClockView(NativeBigClockTimeView);
-        hookBigClockView(NativeBigDigitalTimeView);
-        hookBigClockView(NativeBigDateMessageView);
-        hookBigClockFontClass(NativeBigClockTimeView);
-        hookBigClockFontClass(NativeBigDigitalTimeView);
-        hookBigClockFontClass(NativeBigCustomizedTextView);
-        hookBigClockFontClass(NativeCommonCustomizedTextView);
-        NativeOplusHdrTextView
-                .after("setHdrEnabled")
-                .run(param -> {
-                    if (param.thisObject instanceof View view) {
-                        applyFontToAodView(view);
-                        view.invalidate();
-                    }
-                });
-        NativeOplusHdrTextView
-                .before("onDraw")
-                .run(param -> {
-                    if (param.thisObject instanceof TextView textView
-                            && isNativeAodClockTextId(textView)) {
-                        applyFontToNativeAodTextView(textView);
-                        if (!mNativeAodTextHookLogged) {
-                            mNativeAodTextHookLogged = true;
-                            XposedBridge.log("[OxygenCustomizer-AOD] OplusHDRTextView onDraw hit, id="
-                                    + getNativeAodClockTextId(textView) + ", font=" + mFontStyle);
-                        }
-                    }
-                });
-
+        // Clock plugin classes (KeyguardClockBase / PersonalityClocks) are not
+        // loaded through createPackageContext(CONTEXT_INCLUDE_CODE): that made
+        // a second copy of their classes, and hooks on those copies never ran.
+        // The classes SystemUI really uses are hooked in their actual
+        // ClassLoader (ensureNativeClockHooks / ensureAodEngineHooks).
     }
 
-    private void hookBigClockView(ReflectedClass reflectedClass) {
-        reflectedClass
-                .before("onAttachedToWindow")
-                .run(param -> applyFontToBigClockObject(param.thisObject, false));
-        reflectedClass
-                .before("onDraw")
-                .run(param -> applyFontToBigClockObject(param.thisObject, true));
-        reflectedClass
-                .before("dispatchDraw")
-                .run(param -> applyFontToBigClockObject(param.thisObject, true));
-        reflectedClass
-                .after("onLayout")
-                .run(param -> applyFontToBigClockObject(param.thisObject, true));
-    }
 
-    private void hookBigClockFontClass(ReflectedClass reflectedClass) {
-        reflectedClass
-                .before("setFontStyle")
-                .run(param -> replaceTypefaceArgument(param, 0));
-        reflectedClass
-                .before("setFontStyleWithoutLayout")
-                .run(param -> replaceTypefaceArgument(param, 0));
-    }
 
-    private void replaceTypefaceArgument(de.robv.android.xposed.XC_MethodHook.MethodHookParam param,
-                                         int index) {
-        Typeface typeface = loadClockTypeface(mFontStyle);
-        if (typeface != null && param.args != null && param.args.length > index) {
-            param.args[index] = typeface;
-        }
-    }
 
-    private void applyFontToBigClockObject(Object object, boolean onDraw) {
-        if (object instanceof View view) {
-            if (onDraw) {
-                applyFontToAodViewOnDraw(view);
-            } else {
-                applyFontToAodView(view);
-            }
-            applyFontToNativeAodClockIds(view);
-        }
-    }
 
     private boolean isNativeAodClockTextId(View view) {
         return getNativeAodClockTextId(view) != null;
@@ -1055,39 +700,7 @@ public class AodClock extends XposedMods {
         }
     }
 
-    private void logNativeClockTimeFontState(View view) {
-        if (mNativeClockFontStateLogged || view == null) return;
-        mNativeClockFontStateLogged = true;
-        String[] childFields = {
-                "timeHourFirstTextView",
-                "timeHourSecondTextView",
-                "timeMinuteTextView",
-                "timeSymbolTextView",
-                "timeAmPmTextView"
-        };
-        StringBuilder state = new StringBuilder();
-        for (String fieldName : childFields) {
-            try {
-                Object child = getObjectField(view, fieldName);
-                if (child instanceof TextView textView) {
-                    state.append(fieldName).append('=').append(textView.getTypeface()).append(';');
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        XposedBridge.log("[OxygenCustomizer-AOD] ClockTimeView font state: " + state);
-    }
 
-    private void logNativeClockFontState(View view, String phase) {
-        if (view == null || !isNativeAodClockTextId(view)) return;
-        try {
-            XposedBridge.log("[OxygenCustomizer-AOD] " + phase
-                    + ", id=" + getNativeAodClockTextId(view)
-                    + ", class=" + view.getClass().getName()
-                    + ", typeface=" + ((TextView) view).getTypeface());
-        } catch (Throwable ignored) {
-        }
-    }
 
     private boolean isDescendantOfNativeAodClock(View view) {
         View current = view;
@@ -1138,31 +751,9 @@ public class AodClock extends XposedMods {
 
     private Typeface loadClockTypeface(String style) {
         // Do not read Xprefs here: RemotePreferences does an IPC query to the
-        // module app on every get, and this runs from draw/text hooks (every
-        // AOD update and lockscreen frame). updatePrefs() keeps mFontStyle
-        // current whenever the setting changes.
-        if (appContext == null || style == null || FONT_STYLE_SYSTEM.equals(style)) return null;
-        // Callers run from draw/text hooks: reuse one instance so setTypeface()
-        // sees the same object and does not trigger another layout/draw pass.
-        if (style.equals(mCachedTypefaceStyle)) return mCachedTypeface;
-
-        String assetName;
-        if (FONT_STYLE_CLOCKOPIA.equals(style)) {
-            assetName = "Fonts/clockopia.ttf";
-        } else if (FONT_STYLE_ORBITRON.equals(style)) {
-            assetName = "Fonts/orbitron_regular.ttf";
-        } else {
-            return null;
-        }
-
-        mCachedTypefaceStyle = style;
-        try {
-            mCachedTypeface = Typeface.createFromAsset(appContext.getAssets(), assetName);
-        } catch (Throwable t) {
-            log("Unable to load bundled AOD font " + assetName + ": " + t.getMessage());
-            mCachedTypeface = null;
-        }
-        return mCachedTypeface;
+        // module app on every get, and this runs from draw/text hooks.
+        // updatePrefs() keeps mFontStyle current whenever the setting changes.
+        return GlobalFontHelper.get(appContext, style);
     }
 
     private void applyFontToAodView() {

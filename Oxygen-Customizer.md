@@ -471,3 +471,10 @@ com.oplus.aodimpl.AodRootLayout
   - `LockscreenClock.loadClockTypeface()`：缓存 Typeface，避免每分钟更新时重复读取字体文件并触发多余布局。
 - **删除 Vector 后复查（2026-10-25 19:34–19:36）**：SystemUI 进程（PID 22586，19:28:56 启动）未重启、无新崩溃；锁屏时钟、星期、“Charging 94%”、通知条均为 Orbitron；AOD（确认 `mWakefulness=Dozing` 后截图）中央时间“7:36”（保留原生黄色）、日期、“73 unlocks”、底部电量“94%”均为 Orbitron。
 - 排障提示：今后 SystemUI 若再出现启动崩溃，先查 `/data/tombstones/` 与 LSPosed 的安全模式状态（`/data/adb/modules/zygisk_lsposed/lspctl status`）。
+
+### 11.12 Hook 精简与字体加载合并（2026-10-25）
+
+- 删除每帧触发的全局 hook：`TextView.onDraw` / `onLayout`、`ViewGroup.dispatchDraw`、`FrameLayout.dispatchDraw` / `onAttachedToWindow`（FrameLayout 未声明这两个方法，原本即无效）、`WrapGridLayout.dispatchDraw` / `onLayout`、`CustomOplusKeyguardStyleClock.onDraw` / `dispatchDraw`。字体改为只在原生代码会重设字体的事件上纠正：`TextView.setText` / `setTypeface` / `onAttachedToWindow`、`View.onAttachedToWindow`（时钟根视图）、`OplusKeyguardStyleClock.onAttachedToWindow`、`AodClockLayout` 时间更新；AOD 引擎（egview / `OpParsonsClock`）hook 保持不变。
+- 删除死代码：类加载器为 `null` 后不再生效的 KeyguardClockBase / PersonalityClocks / HDR 静态 hook 及其辅助方法和日志；`NativeTextView` 一组与全局 `TextView` hook 完全重复的 hook（同一方法被挂两次）。
+- 新增 `xposed/utils/GlobalFontHelper`：`AodClock`、`LockscreenClock`、`ChargingAnimation`、`LockscreenNotificationFont` 共用一个按样式缓存的 Typeface（只读一次字体文件、同一实例），替换原来四份重复的加载代码。
+- 验证：安装后重启 SystemUI 0 崩溃；锁屏（时钟、星期、日期、天气、充电文字、通知条）与 AOD（时间、日期、解锁次数、电量）均为 Orbitron，锁屏跨分钟（7:42→7:44）后保持。锁屏静止时 SystemUI CPU 优化前后均约 10–14%：静止画面下开销主要不在这些 hook，被删除的每帧 hook 的收益体现在下拉通知栏、滚动、动画等频繁重绘场景（未单独测量）。AOD 跨分钟后的截图因设备断开未取得，此前同类改动已验证 AOD 跨分钟刷新正常。

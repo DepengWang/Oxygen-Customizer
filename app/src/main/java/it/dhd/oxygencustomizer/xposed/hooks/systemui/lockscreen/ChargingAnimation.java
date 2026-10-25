@@ -13,6 +13,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import it.dhd.oxygencustomizer.BuildConfig;
 import it.dhd.oxygencustomizer.utils.Constants;
 import it.dhd.oxygencustomizer.xposed.XposedMods;
+import it.dhd.oxygencustomizer.xposed.utils.GlobalFontHelper;
 import it.dhd.oxygencustomizer.xposed.utils.ViewHelper;
 import it.dhd.oxygencustomizer.xposed.utils.toolkit.ReflectedClass;
 
@@ -26,8 +27,6 @@ public class ChargingAnimation extends XposedMods {
 
     private static final String listenPackage = Constants.Packages.SYSTEM_UI;
     private static final String FONT_STYLE_SYSTEM = "system";
-    private static final String FONT_STYLE_CLOCKOPIA = "clockopia";
-    private static final String FONT_STYLE_ORBITRON = "orbitron";
     private static final String[] LEVEL_VIEW_METHODS = {
             "onFinishInflate",
             "onConfigurationChanged",
@@ -40,8 +39,6 @@ public class ChargingAnimation extends XposedMods {
     };
     private Context appContext;
     private String mFontStyle = FONT_STYLE_SYSTEM;
-    private String mCachedTypefaceStyle;
-    private Typeface mCachedTypeface;
     private boolean mFontAppliedLogged = false;
 
     public ChargingAnimation(Context context) {
@@ -107,27 +104,7 @@ public class ChargingAnimation extends XposedMods {
     }
 
     private Typeface loadTypeface() {
-        String style = mFontStyle;
-        if (appContext == null || style == null || FONT_STYLE_SYSTEM.equals(style)) return null;
-        if (style.equals(mCachedTypefaceStyle)) return mCachedTypeface;
-
-        String assetName;
-        if (FONT_STYLE_CLOCKOPIA.equals(style)) {
-            assetName = "Fonts/clockopia.ttf";
-        } else if (FONT_STYLE_ORBITRON.equals(style)) {
-            assetName = "Fonts/orbitron_regular.ttf";
-        } else {
-            return null;
-        }
-
-        mCachedTypefaceStyle = style;
-        try {
-            mCachedTypeface = Typeface.createFromAsset(appContext.getAssets(), assetName);
-        } catch (Throwable t) {
-            log("Unable to load bundled charging font " + assetName + ": " + t.getMessage());
-            mCachedTypeface = null;
-        }
-        return mCachedTypeface;
+        return GlobalFontHelper.get(appContext, mFontStyle);
     }
 
     @Override

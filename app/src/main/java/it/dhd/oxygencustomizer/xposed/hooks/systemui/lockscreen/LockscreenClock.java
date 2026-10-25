@@ -99,6 +99,7 @@ import it.dhd.oxygencustomizer.R;
 import it.dhd.oxygencustomizer.utils.Constants;
 import it.dhd.oxygencustomizer.xposed.ResourceManager;
 import it.dhd.oxygencustomizer.xposed.XposedMods;
+import it.dhd.oxygencustomizer.xposed.utils.GlobalFontHelper;
 import it.dhd.oxygencustomizer.xposed.utils.CircleFramedDrawable;
 import it.dhd.oxygencustomizer.xposed.utils.DrawableConverter;
 import it.dhd.oxygencustomizer.xposed.utils.SystemUtils;
@@ -113,8 +114,6 @@ public class LockscreenClock extends XposedMods {
     private static final String OC_LOCKSCREEN_CLOCK_LAYOUT = "lockscreen_clock_layout";
     private static final String OC_LOCKSCREEN_CLOCK_TAG = "oxygencustomizer_lockscreen_clock";
     private static final String FONT_STYLE_SYSTEM = "system";
-    private static final String FONT_STYLE_CLOCKOPIA = "clockopia";
-    private static final String FONT_STYLE_ORBITRON = "orbitron";
     private final static String listenPackage = Constants.Packages.SYSTEM_UI;
     private static final long thresholdTime = 500; // milliseconds
     private static Object mStockClock;
@@ -133,8 +132,6 @@ public class LockscreenClock extends XposedMods {
     private float clockScale;
     private int lineHeight;
     private String fontStyle = FONT_STYLE_SYSTEM;
-    private String mCachedTypefaceStyle;
-    private Typeface mCachedTypeface;
     private String customName, customDeviceName;
     private boolean useCustomUserImage;
     private boolean useCustomImage;
@@ -696,29 +693,7 @@ public class LockscreenClock extends XposedMods {
     }
 
     private Typeface loadClockTypeface(String style) {
-        if (appContext == null || style == null || FONT_STYLE_SYSTEM.equals(style)) return null;
-        // Reuse one instance: this runs on every minute update, and a new
-        // Typeface each time re-reads the asset and makes setTypeface() see a
-        // change (extra relayout).
-        if (style.equals(mCachedTypefaceStyle)) return mCachedTypeface;
-
-        String assetName;
-        if (FONT_STYLE_CLOCKOPIA.equals(style)) {
-            assetName = "Fonts/clockopia.ttf";
-        } else if (FONT_STYLE_ORBITRON.equals(style)) {
-            assetName = "Fonts/orbitron_regular.ttf";
-        } else {
-            return null;
-        }
-
-        mCachedTypefaceStyle = style;
-        try {
-            mCachedTypeface = Typeface.createFromAsset(appContext.getAssets(), assetName);
-        } catch (Throwable t) {
-            log("Unable to load bundled lockscreen font " + assetName + ": " + t.getMessage());
-            mCachedTypeface = null;
-        }
-        return mCachedTypeface;
+        return GlobalFontHelper.get(appContext, style);
     }
 
     private void applyFontToStockClock() {
