@@ -137,9 +137,6 @@ public class AodClock extends XposedMods {
     private final Set<ClassLoader> mHookedNativeClockLoaders =
             Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<Class<?>> mHookedThemeClockHelpers = new HashSet<>();
-    // Strong references to classloaders from createPackageContext(), see
-    // handleLoadPackage(): hooked classes must never be unloaded.
-    private static final java.util.List<ClassLoader> mPackageClassLoaders = new java.util.ArrayList<>();
     private final Map<View, String> mNativeClockRenderedStyle = new WeakHashMap<>();
     // The OOS 16 AOD screen (aod_off_layout) is drawn by the VariUIEngine
     // "egview" widgets, which paint text through AttributeTextView.mTextPaint
@@ -429,21 +426,15 @@ public class AodClock extends XposedMods {
                     if (isDescendantOfNativeAodClock(view)) applyFontToAodViewOnDraw(view);
                 });
 
+        // Do NOT load the clock plugins through createPackageContext(
+        // CONTEXT_INCLUDE_CODE): that loads KeyguardClockBase / PersonalityClocks
+        // a second time in a separate ClassLoader (a second DexCache for the same
+        // dex) and hooking those duplicate classes was followed by SystemUI GC
+        // aborts ("GC tried to mark invalid reference") a few seconds after
+        // start. The classes SystemUI really uses are hooked in their actual
+        // ClassLoader instead (ensureNativeClockHooks / ensureAodEngineHooks).
+        // With a null loader the lookups below find nothing and hook nothing.
         ClassLoader clockBaseClassLoader = null;
-        try {
-            Context clockBaseContext = mContext.createPackageContext(
-                    "com.oplus.keyguard.clock.base",
-                    Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY
-            );
-            clockBaseClassLoader = clockBaseContext.getClassLoader();
-            // Keep it reachable: ActivityThread only caches it weakly, and if
-            // it is unloaded the hooked classes' DexCache is freed while the
-            // hooks still reference it -> GC "invalid reference" crashes ~5 s
-            // after SystemUI starts.
-            mPackageClassLoaders.add(clockBaseClassLoader);
-        } catch (Throwable t) {
-            Log.w("OxygenCustomizer-AOD", "Unable to obtain KeyguardClockBase classloader", t);
-        }
 
         ReflectedClass NativeClockTimeView = ReflectedClass.ofIfPossible(
                 "com.oplus.keyguard.clock.base.ui.view.ClockTimeView", clockBaseClassLoader
@@ -463,18 +454,8 @@ public class AodClock extends XposedMods {
         ReflectedClass NativeTextView = ReflectedClass.ofIfPossible(
                 "android.widget.TextView", lpparam.classLoader
         );
+        // Not loaded through createPackageContext() any more, see clockBaseClassLoader.
         ClassLoader personalityClockClassLoader = null;
-        try {
-            Context personalityContext = mContext.createPackageContext(
-                    "com.oplus.keyguard.personality.clocks",
-                    Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY
-            );
-            personalityClockClassLoader = personalityContext.getClassLoader();
-            mPackageClassLoaders.add(personalityClockClassLoader);
-        } catch (Throwable t) {
-            XposedBridge.log("[OxygenCustomizer-AOD] Unable to obtain PersonalityClocks classloader: "
-                    + t.getClass().getSimpleName());
-        }
         ReflectedClass NativeBigClockContainer = ReflectedClass.ofIfPossible(
                 "com.oplus.keyguard.clock.big.ui.view.ClockContainer", personalityClockClassLoader
         );
@@ -1156,10 +1137,10 @@ public class AodClock extends XposedMods {
     }
 
     private Typeface loadClockTypeface(String style) {
-        if (Xprefs != null) {
-            style = Xprefs.getString(GLOBAL_FONT_STYLE, style);
-            mFontStyle = style;
-        }
+        // Do not read Xprefs here: RemotePreferences does an IPC query to the
+        // module app on every get, and this runs from draw/text hooks (every
+        // AOD update and lockscreen frame). updatePrefs() keeps mFontStyle
+        // current whenever the setting changes.
         if (appContext == null || style == null || FONT_STYLE_SYSTEM.equals(style)) return null;
         // Callers run from draw/text hooks: reuse one instance so setTypeface()
         // sees the same object and does not trigger another layout/draw pass.

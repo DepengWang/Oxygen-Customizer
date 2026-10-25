@@ -133,6 +133,8 @@ public class LockscreenClock extends XposedMods {
     private float clockScale;
     private int lineHeight;
     private String fontStyle = FONT_STYLE_SYSTEM;
+    private String mCachedTypefaceStyle;
+    private Typeface mCachedTypeface;
     private String customName, customDeviceName;
     private boolean useCustomUserImage;
     private boolean useCustomImage;
@@ -694,7 +696,11 @@ public class LockscreenClock extends XposedMods {
     }
 
     private Typeface loadClockTypeface(String style) {
-        if (appContext == null || FONT_STYLE_SYSTEM.equals(style)) return null;
+        if (appContext == null || style == null || FONT_STYLE_SYSTEM.equals(style)) return null;
+        // Reuse one instance: this runs on every minute update, and a new
+        // Typeface each time re-reads the asset and makes setTypeface() see a
+        // change (extra relayout).
+        if (style.equals(mCachedTypefaceStyle)) return mCachedTypeface;
 
         String assetName;
         if (FONT_STYLE_CLOCKOPIA.equals(style)) {
@@ -705,12 +711,14 @@ public class LockscreenClock extends XposedMods {
             return null;
         }
 
+        mCachedTypefaceStyle = style;
         try {
-            return Typeface.createFromAsset(appContext.getAssets(), assetName);
+            mCachedTypeface = Typeface.createFromAsset(appContext.getAssets(), assetName);
         } catch (Throwable t) {
             log("Unable to load bundled lockscreen font " + assetName + ": " + t.getMessage());
-            return null;
+            mCachedTypeface = null;
         }
+        return mCachedTypeface;
     }
 
     private void applyFontToStockClock() {

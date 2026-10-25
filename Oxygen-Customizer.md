@@ -411,7 +411,7 @@ com.oplus.aodimpl.AodRootLayout
 1. **Clockopia 授权未确认**，字体文件已在公开分支和提交历史中；若不可分发，需改为用户导入并清理历史。Clockopia 实机效果未测。
 2. 切回“系统字体”能否完全恢复原生显示：未验证（部分路径可能需重启 SystemUI 才完全恢复）。
 3. 锁屏通知“解锁后通知栏恢复系统字体”：未人工验证。锁屏媒体卡片不在范围内。
-4. 安装新 APK 后的头 1–2 次 SystemUI 启动仍可能出现同类 GC 崩溃后自动恢复（疑为 Vector 刷新模块过渡期）。
+4. ~~安装新 APK 后的头 1–2 次 SystemUI 启动仍可能出现同类 GC 崩溃~~ 已解决：根因是 Hook 框架 Vector 2.2 (3080)，换为 LSPosed v2.2.1 (7912) 后消失，见 11.11。
 5. 仅验证了 Insight（OpParsonsClock）AOD 样式；其他 AOD 样式、12 小时制、长时间功耗对比均未测。
 6. 一次锁屏截图中时钟偏灰，推测为充电动画淡入时的背景压暗，未确认。
 
@@ -455,3 +455,18 @@ com.oplus.aodimpl.AodRootLayout
   - `ViewHelper.applyTypefaceToPaintFields()`：每个类的 `Paint` 字段只反射扫描一次；字体相同则不重设。
   - 新增 `applyFontToAodViewOnDraw()`：**仅用于每帧触发的绘制类 hook**（`onDraw` / `dispatchDraw` / `onLayout`），同一视图每秒最多整树重设一次，字体切换时立即失效。**事件类 hook**（`OpParsonsClock` 的 `applyLayoutParams` / `onTimeChanged` / `updateResource` / `onAttachedToWindow`、`setText`、挂载、`performTimeUpdate`）必须调用不限频的 `applyFontToAodView()`：原生代码会在这些时机重设自己的字体，若被限频跳过，AOD 中间时间/日期会变回原生字体（曾出现该回归，已修正）。
 - 验证：AOD 中间时间、日期、解锁次数、底部电量均为 Orbitron，跨分钟刷新后保持；SystemUI 无崩溃。桌面场景粗测 SystemUI CPU 由约 20% 降到 7–9%（未确认采样时音乐仍在播放，降幅可能偏高）；锁屏亮屏场景复测：SystemUI 约 12–15%（主线程约 12%、渲染线程约 10%），优化前为 54–68%；但优化前测量时音乐在播放（状态栏胶囊波形动画），复测时音乐暂停，两次条件不完全相同，降幅中有一部分来自动画差异。安装新 APK 后首次启动仍出现 1 次已知的 GC 崩溃（见 11.5 第 4 条），随后正常。
+
+### 11.11 SystemUI 启动 GC 崩溃根因与框架更换（2026-10-25）
+
+- **结论**：`GC tried to mark invalid reference 0x…1f5030`（SystemUI 启动 3–7 s，`DexCache::VisitNativeRoots`）的根因是 **Hook 框架 Vector 2.2 (3080)**，不是本模块代码。上游 [Oxygen-Customizer issue #240](https://github.com/DHD2280/Oxygen-Customizer/issues/240) 为同一崩溃（OnePlus 13 / OOS 16 / Vector 2.2 3080），维护者建议更换为 LSPosed v2.2.x，已关闭。
+- **排查过程中排除的假设**：
+  - 删除 ART 运行时应用映像 `/data/user_de/0/com.android.systemui/cache/oat_primary/arm64/SystemUI.art`（备份于 `/data/local/tmp/SystemUI.art.bak`）后仍崩溃。
+  - 去掉 `createPackageContext(CONTEXT_INCLUDE_CODE)` 重复加载时钟插件后仍崩溃。10.9.1 中“强引用类加载器修复了崩溃”的结论不成立（当时 9 次重启无崩溃属于偶然）。
+  - 连续崩溃后 Vector 将 SystemUI 判定为 bootloop 并停止注入模块，SystemUI 随之稳定；这也是“崩溃数次后自动恢复、但字体消失”的原因。
+- **框架更换**：从官方入口 `https://lsposed.zip` 下载 `LSPosed-v2.2.1-7912-release.zip`（SHA256 `ed37de2d2097aa6ba871377e7bf4ac719b708484f9468928e6abae10ab311e74`），`magisk --install-module` 安装（安装脚本逐文件校验 SHA256），Vector 仅加 `disable` 标记停用（`/data/adb/modules/zygisk_vector/disable`，删除该文件即可回退）；安装前配置备份于 `/data/local/tmp/lspd-config-backup`。模块启用状态与作用域沿用原配置。
+- **验证**：整机重启（SystemUI 带模块启动）0 崩溃；再重启 SystemUI 一次 0 崩溃（更换前同样操作每次 2–4 次崩溃）；`lspctl status`：System server connected、Safe mode no；锁屏与 AOD 字体正常。
+- **同批代码改动**：
+  - `AodClock`：删除 `createPackageContext(CONTEXT_INCLUDE_CODE)` 重复加载 KeyguardClockBase / PersonalityClocks 及其上的静态 hook（这些类不是 SystemUI 实际使用的类，hook 无效；实际类由 `ensureNativeClockHooks` / `ensureAodEngineHooks` 在真实 ClassLoader 上挂钩）。
+  - `AodClock.loadClockTypeface()`：不再每次读取 `Xprefs`（`RemotePreferences` 每次读取都是对模块应用的跨进程查询，且位于绘制 hook 热路径）；改用 `updatePrefs()` 维护的 `mFontStyle`。
+  - `LockscreenClock.loadClockTypeface()`：缓存 Typeface，避免每分钟更新时重复读取字体文件并触发多余布局。
+- 排障提示：今后 SystemUI 若再出现启动崩溃，先查 `/data/tombstones/` 与 LSPosed 的安全模式状态（`/data/adb/modules/zygisk_lsposed/lspctl status`）。
