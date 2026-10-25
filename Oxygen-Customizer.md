@@ -463,7 +463,7 @@ com.oplus.aodimpl.AodRootLayout
   - 删除 ART 运行时应用映像 `/data/user_de/0/com.android.systemui/cache/oat_primary/arm64/SystemUI.art`后仍崩溃（该缓存由 ART 自动重新生成；临时备份已于 2026-10-25 删除）。
   - 去掉 `createPackageContext(CONTEXT_INCLUDE_CODE)` 重复加载时钟插件后仍崩溃。10.9.1 中“强引用类加载器修复了崩溃”的结论不成立（当时 9 次重启无崩溃属于偶然）。
   - 连续崩溃后 Vector 将 SystemUI 判定为 bootloop 并停止注入模块，SystemUI 随之稳定；这也是“崩溃数次后自动恢复、但字体消失”的原因。
-- **框架更换**：从官方入口 `https://lsposed.zip` 下载 `LSPosed-v2.2.1-7912-release.zip`（SHA256 `ed37de2d2097aa6ba871377e7bf4ac719b708484f9468928e6abae10ab311e74`），`magisk --install-module` 安装（安装脚本逐文件校验 SHA256），Vector 仅加 `disable` 标记停用（`/data/adb/modules/zygisk_vector/disable`，删除该文件即可回退）。模块启用状态与作用域沿用原配置。安装前做过的配置备份（`/data/local/tmp/lspd-config-backup`）和推送到手机的安装包已于 2026-10-25 确认正常后删除。
+- **框架更换**：从官方入口 `https://lsposed.zip` 下载 `LSPosed-v2.2.1-7912-release.zip`（SHA256 `ed37de2d2097aa6ba871377e7bf4ac719b708484f9468928e6abae10ab311e74`），`magisk --install-module` 安装（安装脚本逐文件校验 SHA256），Vector 先加 `disable` 标记停用，确认 LSPosed 正常后于 2026-10-25 直接删除模块目录 `/data/adb/modules/zygisk_vector`（**未**走 Magisk 卸载流程：Vector 的 `uninstall.sh` 只有 `rm -rf /data/adb/lspd`，会删掉 LSPosed 共用的模块配置）。如需回到 Vector 只能重新刷入，且 SystemUI 启动崩溃会复现。模块启用状态与作用域沿用原配置。安装前做过的配置备份（`/data/local/tmp/lspd-config-backup`）和推送到手机的安装包已于 2026-10-25 确认正常后删除。
 - **验证**：整机重启（SystemUI 带模块启动）0 崩溃；再重启 SystemUI 一次 0 崩溃（更换前同样操作每次 2–4 次崩溃）；`lspctl status`：System server connected、Safe mode no；锁屏与 AOD 字体正常。
 - **同批代码改动**：
   - `AodClock`：删除 `createPackageContext(CONTEXT_INCLUDE_CODE)` 重复加载 KeyguardClockBase / PersonalityClocks 及其上的静态 hook（这些类不是 SystemUI 实际使用的类，hook 无效；实际类由 `ensureNativeClockHooks` / `ensureAodEngineHooks` 在真实 ClassLoader 上挂钩）。
